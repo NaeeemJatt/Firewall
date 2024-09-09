@@ -1,11 +1,10 @@
 import sys
 import threading
 import subprocess  # To run firewall commands
-from PyQt5.QtWidgets import QApplication, QMainWindow, QPushButton, QLabel, QVBoxLayout, QWidget, QTableWidget, QTableWidgetItem, QHeaderView, QInputDialog
+from PyQt5.QtWidgets import QApplication, QMainWindow, QPushButton, QLabel, QVBoxLayout, QWidget, QTableWidget, QTableWidgetItem, QHeaderView, QInputDialog, QLineEdit, QComboBox
 from PyQt5.QtCore import Qt, QTimer
 from scapy.all import sniff, IP, TCP, UDP
 import ctypes
-
 
 
 class FirewallApp(QMainWindow):
@@ -16,11 +15,14 @@ class FirewallApp(QMainWindow):
         self.packet_count = 0
         self.sniffing = False
 
+        # Store captured packets for filtering
+        self.captured_packets = []
+
         self.initUI()
 
     def initUI(self):
         self.setWindowTitle('Python Firewall')
-        self.setGeometry(100, 100, 800, 400)
+        self.setGeometry(100, 100, 800, 500)
 
         # Main Layout
         self.layout = QVBoxLayout()
@@ -49,6 +51,21 @@ class FirewallApp(QMainWindow):
         self.block_ip_button = QPushButton("Block IP", self)
         self.block_ip_button.clicked.connect(self.block_ip)
         self.layout.addWidget(self.block_ip_button)
+
+        # Search Section
+        self.search_label = QLabel("Search Packets:", self)
+        self.layout.addWidget(self.search_label)
+
+        self.search_input = QLineEdit(self)
+        self.layout.addWidget(self.search_input)
+
+        self.search_criteria = QComboBox(self)
+        self.search_criteria.addItems(["Search by IP", "Search by Protocol"])
+        self.layout.addWidget(self.search_criteria)
+
+        self.search_button = QPushButton("Search", self)
+        self.search_button.clicked.connect(self.search_packets)
+        self.layout.addWidget(self.search_button)
 
         # Table to display captured packets
         self.packet_table = QTableWidget(self)
@@ -115,25 +132,31 @@ class FirewallApp(QMainWindow):
                 dst_port = "N/A"
                 protocol = "Other"
 
+            # Save the packet data for searching/filtering
+            self.captured_packets.append((src_ip, dst_ip, src_port, dst_port, protocol))
+
             # Add packet info to the table
-            row_position = self.packet_table.rowCount()
-            self.packet_table.insertRow(row_position)  # Insert at the bottom
-
-            # Insert the correct data into the corresponding columns
-            self.packet_table.setItem(row_position, 0, QTableWidgetItem(src_ip))
-            self.packet_table.setItem(row_position, 1, QTableWidgetItem(dst_ip))
-            self.packet_table.setItem(row_position, 2, QTableWidgetItem(str(src_port)))
-            self.packet_table.setItem(row_position, 3, QTableWidgetItem(str(dst_port)))
-            self.packet_table.setItem(row_position, 4, QTableWidgetItem(protocol))
-
-            # Center align the newly added items
-            for i in range(5):
-                item = self.packet_table.item(row_position, i)
-                item.setTextAlignment(Qt.AlignCenter)
+            self.add_packet_to_table(src_ip, dst_ip, src_port, dst_port, protocol)
 
             # Increment packet count
             self.packet_count += 1
             self.packet_count_label.setText(f"Packets Captured: {self.packet_count}")
+
+    def add_packet_to_table(self, src_ip, dst_ip, src_port, dst_port, protocol):
+        row_position = self.packet_table.rowCount()
+        self.packet_table.insertRow(row_position)  # Insert at the bottom
+
+        # Insert the correct data into the corresponding columns
+        self.packet_table.setItem(row_position, 0, QTableWidgetItem(src_ip))
+        self.packet_table.setItem(row_position, 1, QTableWidgetItem(dst_ip))
+        self.packet_table.setItem(row_position, 2, QTableWidgetItem(str(src_port)))
+        self.packet_table.setItem(row_position, 3, QTableWidgetItem(str(dst_port)))
+        self.packet_table.setItem(row_position, 4, QTableWidgetItem(protocol))
+
+        # Center align the newly added items
+        for i in range(5):
+            item = self.packet_table.item(row_position, i)
+            item.setTextAlignment(Qt.AlignCenter)
 
     def block_ip(self):
         ip, ok = QInputDialog.getText(self, 'Block IP', 'Enter IP address to block:')
@@ -144,6 +167,31 @@ class FirewallApp(QMainWindow):
                 self.label.setText(f"Blocked IP: {ip}")
             except Exception as e:
                 self.label.setText(f"Error blocking IP: {str(e)}")
+
+    def search_packets(self):
+        search_term = self.search_input.text()
+        search_by = self.search_criteria.currentText()
+
+        if not search_term:
+            self.label.setText("Please enter a search term.")
+            return
+
+        # Clear the table before showing search results
+        self.packet_table.setRowCount(0)
+
+        # Filter packets based on search criteria
+        for packet in self.captured_packets:
+            src_ip, dst_ip, src_port, dst_port, protocol = packet
+
+            if search_by == "Search by IP":
+                if search_term in src_ip or search_term in dst_ip:
+                    self.add_packet_to_table(src_ip, dst_ip, src_port, dst_port, protocol)
+
+            elif search_by == "Search by Protocol":
+                if search_term.lower() == protocol.lower():
+                    self.add_packet_to_table(src_ip, dst_ip, src_port, dst_port, protocol)
+
+        self.label.setText(f"Search completed for {search_term}.")
 
     def update_ui(self):
         # Scroll to the bottom to show the latest packet
