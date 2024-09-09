@@ -2,9 +2,9 @@ import sys
 import subprocess  # To run firewall commands
 import json
 import csv
-from PyQt5.QtWidgets import QApplication, QMainWindow, QMenuBar, QLabel, QVBoxLayout, QHBoxLayout, QWidget, QPushButton, QLineEdit, QTableWidget, QTableWidgetItem, QHeaderView, QInputDialog, QComboBox, QFileDialog
+from PyQt5.QtWidgets import QApplication, QMainWindow, QMenuBar, QLabel, QVBoxLayout, QHBoxLayout, QWidget, QPushButton, QLineEdit, QTableWidget, QTableWidgetItem, QHeaderView, QInputDialog, QComboBox, QFileDialog, QMessageBox
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread
-from scapy.all import sniff, IP, TCP, UDP
+from scapy.all import sniff, IP, TCP, UDP, DNS, Raw
 
 
 class SnifferThread(QThread):
@@ -39,8 +39,8 @@ class FirewallApp(QMainWindow):
         self.initUI()
 
     def initUI(self):
-        self.setWindowTitle('Python Firewall')
-        self.setGeometry(100, 100, 800, 500)
+        self.setWindowTitle('Firewall')
+        self.setGeometry(100, 100, 900, 500)  # Adjusted width to accommodate the new column
 
         # Create Menu Bar
         self.menu_bar = QMenuBar(self)
@@ -59,13 +59,13 @@ class FirewallApp(QMainWindow):
         # Add buttons for Analyze Network and Block Website with larger sizes
         self.analyze_network_button = QPushButton("Analyze Network", self)
         self.analyze_network_button.setFixedHeight(50)
-        self.analyze_network_button.setFixedWidth(350)  # Make it large
+        self.analyze_network_button.setFixedWidth(450)  # Made it larger
         self.analyze_network_button.clicked.connect(self.show_network_analyzer)
         self.button_layout.addWidget(self.analyze_network_button)
 
         self.block_website_button = QPushButton("Block Website", self)
         self.block_website_button.setFixedHeight(50)
-        self.block_website_button.setFixedWidth(350)  # Make it large
+        self.block_website_button.setFixedWidth(450)  # Made it larger
         self.block_website_button.clicked.connect(self.show_block_website)
         self.button_layout.addWidget(self.block_website_button)
 
@@ -119,8 +119,8 @@ class FirewallApp(QMainWindow):
         self.layout.addWidget(self.search_criteria)
 
         self.packet_table = QTableWidget(self)
-        self.packet_table.setColumnCount(5)
-        self.packet_table.setHorizontalHeaderLabels(["Source IP", "Destination IP", "Source Port", "Destination Port", "Protocol"])
+        self.packet_table.setColumnCount(6)  # Added new column for Subprotocol
+        self.packet_table.setHorizontalHeaderLabels(["Source IP", "Destination IP", "Source Port", "Destination Port", "Protocol", "Subprotocol"])
         self.layout.addWidget(self.packet_table)
 
         header = self.packet_table.horizontalHeader()
@@ -152,6 +152,18 @@ class FirewallApp(QMainWindow):
         self.layout.addWidget(self.block_button)
 
     def start_sniffing_thread(self):
+        if self.packet_count > 0:
+            reply = QMessageBox.question(self, 'Discard Packets',
+                'Starting a new capture session will discard the currently captured packets. Do you want to save them?',
+                QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel, QMessageBox.No)
+            
+            if reply == QMessageBox.Yes:
+                self.save_data()
+            elif reply == QMessageBox.Cancel:
+                return  # Cancel starting a new session
+        
+        self.packet_count = 0  # Reset packet counter
+        self.captured_packets.clear()  # Clear captured packets
         self.label.setText("Capturing network traffic...")
         self.analyze_button.setEnabled(False)
         self.stop_button.setEnabled(True)
@@ -170,29 +182,47 @@ class FirewallApp(QMainWindow):
             src_ip = packet[IP].src
             dst_ip = packet[IP].dst
 
-            # Check for TCP or UDP layer to extract ports
+            # Check for TCP or UDP layer to extract ports and determine subprotocol
             if packet.haslayer(TCP):
                 src_port = packet[TCP].sport
                 dst_port = packet[TCP].dport
                 protocol = "TCP"
+                subprotocol = self.get_http_subprotocol(packet)
             elif packet.haslayer(UDP):
                 src_port = packet[UDP].sport
                 dst_port = packet[UDP].dport
                 protocol = "UDP"
+                subprotocol = self.get_udp_subprotocol(packet)
             else:
                 src_port = "N/A"
                 dst_port = "N/A"
                 protocol = "Other"
+                subprotocol = "N/A"
 
             # Save the packet data for searching/filtering
-            self.captured_packets.append((src_ip, dst_ip, src_port, dst_port, protocol))
+            self.captured_packets.append((src_ip, dst_ip, src_port, dst_port, protocol, subprotocol))
 
             # Add packet info to the table
-            self.add_packet_to_table(src_ip, dst_ip, src_port, dst_port, protocol)
+            self.add_packet_to_table(src_ip, dst_ip, src_port, dst_port, protocol, subprotocol)
 
             # Increment packet count
             self.packet_count += 1
             self.packet_count_label.setText(f"Packets Captured: {self.packet_count}")
+
+    def get_http_subprotocol(self, packet):
+        if packet.haslayer(Raw):
+            payload = str(packet[Raw].load)
+            if "HTTP" in payload:
+                if "GET" in payload or "POST" in payload:
+                    return "HTTP"
+                elif "CONNECT" in payload:
+                    return "HTTPS"
+        return "N/A"
+
+    def get_udp_subprotocol(self, packet):
+        if packet.haslayer(DNS):
+            return "DNS"
+        return "N/A"
 
     def stop_sniffing(self):
         if self.sniffer_thread and self.sniffer_thread.isRunning():
@@ -203,9 +233,10 @@ class FirewallApp(QMainWindow):
         self.analyze_button.setEnabled(True)
         self.stop_button.setEnabled(False)
         self.label.setText("Stopped capturing network traffic.")
+        
+        self.timer.stop()  # Stop the timer to prevent update_ui calls
 
-
-    def add_packet_to_table(self, src_ip, dst_ip, src_port, dst_port, protocol):
+    def add_packet_to_table(self, src_ip, dst_ip, src_port, dst_port, protocol, subprotocol):
         row_position = self.packet_table.rowCount()
         self.packet_table.insertRow(row_position)  # Insert at the bottom
 
@@ -215,9 +246,10 @@ class FirewallApp(QMainWindow):
         self.packet_table.setItem(row_position, 2, QTableWidgetItem(str(src_port)))
         self.packet_table.setItem(row_position, 3, QTableWidgetItem(str(dst_port)))
         self.packet_table.setItem(row_position, 4, QTableWidgetItem(protocol))
+        self.packet_table.setItem(row_position, 5, QTableWidgetItem(subprotocol))
 
         # Center align the newly added items
-        for i in range(5):
+        for i in range(6):
             item = self.packet_table.item(row_position, i)
             item.setTextAlignment(Qt.AlignCenter)
 
@@ -246,17 +278,21 @@ class FirewallApp(QMainWindow):
                 self.label.setText(f"Error blocking website: {str(e)}")
 
     def save_data(self):
-        # Let user choose CSV or JSON
-        file_name, _ = QFileDialog.getSaveFileName(self, "Save Data", "", "CSV Files (*.csv);;JSON Files (*.json)")
+        # Let user choose CSV, JSON, or TXT
+        file_name, _ = QFileDialog.getSaveFileName(self, "Save Data", "", "CSV Files (*.csv);;JSON Files (*.json);;TXT Files (*.txt)")
         if file_name:
             if file_name.endswith(".csv"):
                 with open(file_name, "w", newline="") as csv_file:
                     writer = csv.writer(csv_file)
-                    writer.writerow(["Source IP", "Destination IP", "Source Port", "Destination Port", "Protocol"])
+                    writer.writerow(["Source IP", "Destination IP", "Source Port", "Destination Port", "Protocol", "Subprotocol"])
                     writer.writerows(self.captured_packets)
             elif file_name.endswith(".json"):
                 with open(file_name, "w") as json_file:
                     json.dump(self.captured_packets, json_file)
+            elif file_name.endswith(".txt"):
+                with open(file_name, "w") as txt_file:
+                    for packet in self.captured_packets:
+                        txt_file.write(f"{packet[0]} -> {packet[1]} | {packet[2]} -> {packet[3]} | {packet[4]} | {packet[5]}\n")
 
             self.label.setText(f"Data saved to {file_name}")
 
@@ -277,21 +313,23 @@ class FirewallApp(QMainWindow):
                     self.add_packet_to_table(*packet)
 
     def update_ui(self):
-        self.packet_count_label.setText(f"Packets Captured: {self.packet_count}")
+        if hasattr(self, 'packet_count_label') and self.packet_count_label:
+            self.packet_count_label.setText(f"Packets Captured: {self.packet_count}")
 
     def show_network_analyzer(self):
         self.stop_sniffing_if_needed()  # Stop sniffing before switching layout
+        self.timer.stop()  # Stop the timer when switching layouts
         self.network_analyzer_layout()
 
     def show_block_website(self):
         self.stop_sniffing_if_needed()  # Stop sniffing before switching layout
+        self.timer.stop()  # Stop the timer when switching layouts
         self.block_website_layout()
 
     def stop_sniffing_if_needed(self):
         """ Stop the sniffer thread if it's running """
         if self.sniffer_thread and self.sniffer_thread.isRunning():
             self.stop_sniffing()
-
 
 
 if __name__ == '__main__':
