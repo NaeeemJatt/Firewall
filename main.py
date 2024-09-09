@@ -1,11 +1,28 @@
 import sys
-import threading
 import subprocess  # To run firewall commands
 import json
 import csv
-from PyQt5.QtWidgets import QApplication, QMainWindow, QMenuBar, QMenu, QAction, QLabel, QVBoxLayout, QHBoxLayout, QWidget, QPushButton, QLineEdit, QTableWidget, QTableWidgetItem, QHeaderView, QInputDialog, QComboBox, QMessageBox, QFileDialog
-from PyQt5.QtCore import Qt, QTimer
-from scapy.all import sniff, IP, TCP, UDP, wrpcap
+from PyQt5.QtWidgets import QApplication, QMainWindow, QMenuBar, QLabel, QVBoxLayout, QHBoxLayout, QWidget, QPushButton, QLineEdit, QTableWidget, QTableWidgetItem, QHeaderView, QInputDialog, QComboBox, QFileDialog
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QThread
+from scapy.all import sniff, IP, TCP, UDP
+
+
+class SnifferThread(QThread):
+    packet_signal = pyqtSignal(object)  # Signal to send packets to the main thread
+
+    def __init__(self):
+        super().__init__()
+        self.sniffing = True
+
+    def run(self):
+        sniff(prn=self.emit_packet, store=0, stop_filter=lambda x: not self.sniffing)
+
+    def emit_packet(self, packet):
+        if self.sniffing:
+            self.packet_signal.emit(packet)
+
+    def stop(self):
+        self.sniffing = False
 
 
 class FirewallApp(QMainWindow):
@@ -14,7 +31,7 @@ class FirewallApp(QMainWindow):
 
         # Initialize packet count and sniffing flag before UI
         self.packet_count = 0
-        self.sniffing = False
+        self.sniffer_thread = None  # To handle the thread for packet sniffing
 
         # Store captured packets for filtering
         self.captured_packets = []
@@ -62,21 +79,18 @@ class FirewallApp(QMainWindow):
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_ui)
 
-
     def network_analyzer_layout(self):
-        # Main Layout
         # Clear previous layout
         for i in reversed(range(self.layout.count())):
             widget = self.layout.itemAt(i).widget()
             if widget is not None:
                 widget.deleteLater()
 
-        # Rest of the layout remains the same
+        # Main Layout
         self.label = QLabel("Choose an action:", self)
         self.layout.addWidget(self.label)
 
         self.analyze_button = QPushButton("Start Analyzing Network", self)
-        
         self.analyze_button.clicked.connect(self.start_sniffing_thread)
         self.layout.addWidget(self.analyze_button)
 
@@ -139,24 +153,18 @@ class FirewallApp(QMainWindow):
 
     def start_sniffing_thread(self):
         self.label.setText("Capturing network traffic...")
-        self.sniffing = True
         self.analyze_button.setEnabled(False)
         self.stop_button.setEnabled(True)
-        # Start sniffing traffic in a separate thread
-        self.sniffing_thread = threading.Thread(target=self.analyze_network)
-        self.sniffing_thread.daemon = True
-        self.sniffing_thread.start()
+
+        # Create and start the sniffer thread
+        self.sniffer_thread = SnifferThread()
+        self.sniffer_thread.packet_signal.connect(self.process_packet)
+        self.sniffer_thread.start()
+
         # Start the timer
         self.timer.start(100)
 
-    def analyze_network(self):
-        # Start sniffing traffic and pass each packet to process_packet for processing
-        sniff(prn=self.process_packet, store=0, stop_filter=lambda x: not self.sniffing)
-
     def process_packet(self, packet):
-        if not self.sniffing:
-            return
-
         # Filter for IP packets and display Source IP, Destination IP, Source Port, Destination Port, and Protocol
         if packet.haslayer(IP):
             src_ip = packet[IP].src
@@ -186,6 +194,17 @@ class FirewallApp(QMainWindow):
             self.packet_count += 1
             self.packet_count_label.setText(f"Packets Captured: {self.packet_count}")
 
+    def stop_sniffing(self):
+        if self.sniffer_thread and self.sniffer_thread.isRunning():
+            self.sniffer_thread.packet_signal.disconnect(self.process_packet)  # Disconnect the signal to avoid UI issues
+            self.sniffer_thread.stop()
+            self.sniffer_thread.wait()  # Ensure the thread stops before proceeding
+
+        self.analyze_button.setEnabled(True)
+        self.stop_button.setEnabled(False)
+        self.label.setText("Stopped capturing network traffic.")
+
+
     def add_packet_to_table(self, src_ip, dst_ip, src_port, dst_port, protocol):
         row_position = self.packet_table.rowCount()
         self.packet_table.insertRow(row_position)  # Insert at the bottom
@@ -204,7 +223,6 @@ class FirewallApp(QMainWindow):
 
         # Scroll to the newly added row to show the latest packet
         self.packet_table.scrollToBottom()
-
 
     def block_ip(self):
         ip, ok = QInputDialog.getText(self, 'Block IP', 'Enter IP address to block:')
@@ -226,12 +244,6 @@ class FirewallApp(QMainWindow):
                 self.label.setText(f"Blocked website: {domain}")
             except Exception as e:
                 self.label.setText(f"Error blocking website: {str(e)}")
-
-    def stop_sniffing(self):
-        self.sniffing = False
-        self.analyze_button.setEnabled(True)
-        self.stop_button.setEnabled(False)
-        self.label.setText("Stopped capturing network traffic.")
 
     def save_data(self):
         # Let user choose CSV or JSON
@@ -268,10 +280,19 @@ class FirewallApp(QMainWindow):
         self.packet_count_label.setText(f"Packets Captured: {self.packet_count}")
 
     def show_network_analyzer(self):
+        self.stop_sniffing_if_needed()  # Stop sniffing before switching layout
         self.network_analyzer_layout()
 
     def show_block_website(self):
+        self.stop_sniffing_if_needed()  # Stop sniffing before switching layout
         self.block_website_layout()
+
+    def stop_sniffing_if_needed(self):
+        """ Stop the sniffer thread if it's running """
+        if self.sniffer_thread and self.sniffer_thread.isRunning():
+            self.stop_sniffing()
+
+
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
