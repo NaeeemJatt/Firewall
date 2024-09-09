@@ -1,10 +1,11 @@
 import sys
 import threading
 import subprocess  # To run firewall commands
-from PyQt5.QtWidgets import QApplication, QMainWindow, QPushButton, QLabel, QVBoxLayout, QWidget, QTableWidget, QTableWidgetItem, QHeaderView, QInputDialog, QLineEdit, QComboBox
+import json
+import csv
+from PyQt5.QtWidgets import QApplication, QMainWindow, QMenuBar, QMenu, QAction, QLabel, QVBoxLayout, QHBoxLayout, QWidget, QPushButton, QLineEdit, QTableWidget, QTableWidgetItem, QHeaderView, QInputDialog, QComboBox, QMessageBox, QFileDialog
 from PyQt5.QtCore import Qt, QTimer
-from scapy.all import sniff, IP, TCP, UDP
-import ctypes
+from scapy.all import sniff, IP, TCP, UDP, wrpcap
 
 
 class FirewallApp(QMainWindow):
@@ -24,74 +25,117 @@ class FirewallApp(QMainWindow):
         self.setWindowTitle('Python Firewall')
         self.setGeometry(100, 100, 800, 500)
 
-        # Main Layout
-        self.layout = QVBoxLayout()
+        # Create Menu Bar
+        self.menu_bar = QMenuBar(self)
+        self.setMenuBar(self.menu_bar)
 
-        # Label
+        # Create central widget and layout for the window
+        container = QWidget(self)
+        self.setCentralWidget(container)
+
+        # Define a layout for the central widget
+        self.layout = QVBoxLayout(container)
+
+        # Add a horizontal layout for AN and BW buttons
+        self.button_layout = QHBoxLayout()
+
+        # Add buttons for Analyze Network and Block Website with larger sizes
+        self.analyze_network_button = QPushButton("Analyze Network", self)
+        self.analyze_network_button.setFixedHeight(50)
+        self.analyze_network_button.setFixedWidth(350)  # Make it large
+        self.analyze_network_button.clicked.connect(self.show_network_analyzer)
+        self.button_layout.addWidget(self.analyze_network_button)
+
+        self.block_website_button = QPushButton("Block Website", self)
+        self.block_website_button.setFixedHeight(50)
+        self.block_website_button.setFixedWidth(350)  # Make it large
+        self.block_website_button.clicked.connect(self.show_block_website)
+        self.button_layout.addWidget(self.block_website_button)
+
+        # Add the horizontal button layout to the main layout
+        self.layout.addLayout(self.button_layout)
+
+        # Set the layout for the network analyzer initially
+        self.network_analyzer_layout()
+
+        # Timer for regular updates to avoid blocking the event loop
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.update_ui)
+
+
+    def network_analyzer_layout(self):
+        # Main Layout
+        # Clear previous layout
+        for i in reversed(range(self.layout.count())):
+            widget = self.layout.itemAt(i).widget()
+            if widget is not None:
+                widget.deleteLater()
+
+        # Rest of the layout remains the same
         self.label = QLabel("Choose an action:", self)
         self.layout.addWidget(self.label)
 
-        # Button for Network Analysis
         self.analyze_button = QPushButton("Start Analyzing Network", self)
+        
         self.analyze_button.clicked.connect(self.start_sniffing_thread)
         self.layout.addWidget(self.analyze_button)
 
-        # Stop Button
         self.stop_button = QPushButton("Stop Capturing", self)
         self.stop_button.clicked.connect(self.stop_sniffing)
         self.stop_button.setEnabled(False)
         self.layout.addWidget(self.stop_button)
 
-        # Button to Save Data
         self.save_button = QPushButton("Save Captured Data", self)
         self.save_button.clicked.connect(self.save_data)
         self.layout.addWidget(self.save_button)
 
-        # Block IP Button
         self.block_ip_button = QPushButton("Block IP", self)
         self.block_ip_button.clicked.connect(self.block_ip)
         self.layout.addWidget(self.block_ip_button)
 
-        # Search Section
         self.search_label = QLabel("Search Packets:", self)
         self.layout.addWidget(self.search_label)
 
         self.search_input = QLineEdit(self)
+        self.search_input.textChanged.connect(self.search_packets)
         self.layout.addWidget(self.search_input)
 
         self.search_criteria = QComboBox(self)
         self.search_criteria.addItems(["Search by IP", "Search by Protocol"])
         self.layout.addWidget(self.search_criteria)
 
-        self.search_button = QPushButton("Search", self)
-        self.search_button.clicked.connect(self.search_packets)
-        self.layout.addWidget(self.search_button)
-
-        # Table to display captured packets
         self.packet_table = QTableWidget(self)
         self.packet_table.setColumnCount(5)
         self.packet_table.setHorizontalHeaderLabels(["Source IP", "Destination IP", "Source Port", "Destination Port", "Protocol"])
         self.layout.addWidget(self.packet_table)
 
-        # Set equal column widths
         header = self.packet_table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.Stretch)
 
-        # Center align the text in columns
         self.packet_table.setStyleSheet("QTableWidget::item { text-align: center; }")
 
-        # Packet count label
         self.packet_count_label = QLabel(f"Packets Captured: {self.packet_count}", self)
         self.layout.addWidget(self.packet_count_label)
 
-        # Set layout
-        container = QWidget()
-        container.setLayout(self.layout)
-        self.setCentralWidget(container)
+    def block_website_layout(self):
+        # Clear previous layout
+        for i in reversed(range(self.layout.count())):
+            widget = self.layout.itemAt(i).widget()
+            if widget is not None:
+                widget.deleteLater()
 
-        # Timer for regular updates to avoid blocking the event loop
-        self.timer = QTimer()
-        self.timer.timeout.connect(self.update_ui)
+        # Label
+        self.label = QLabel("Enter the website domain to block:", self)
+        self.layout.addWidget(self.label)
+
+        # Input for the domain
+        self.website_input = QLineEdit(self)
+        self.layout.addWidget(self.website_input)
+
+        # Block Button
+        self.block_button = QPushButton("Block Website", self)
+        self.block_button.clicked.connect(self.block_website)
+        self.layout.addWidget(self.block_button)
 
     def start_sniffing_thread(self):
         self.label.setText("Capturing network traffic...")
@@ -158,6 +202,10 @@ class FirewallApp(QMainWindow):
             item = self.packet_table.item(row_position, i)
             item.setTextAlignment(Qt.AlignCenter)
 
+        # Scroll to the newly added row to show the latest packet
+        self.packet_table.scrollToBottom()
+
+
     def block_ip(self):
         ip, ok = QInputDialog.getText(self, 'Block IP', 'Enter IP address to block:')
         if ok and ip:
@@ -168,59 +216,65 @@ class FirewallApp(QMainWindow):
             except Exception as e:
                 self.label.setText(f"Error blocking IP: {str(e)}")
 
-    def search_packets(self):
-        search_term = self.search_input.text()
-        search_by = self.search_criteria.currentText()
-
-        if not search_term:
-            self.label.setText("Please enter a search term.")
-            return
-
-        # Clear the table before showing search results
-        self.packet_table.setRowCount(0)
-
-        # Filter packets based on search criteria
-        for packet in self.captured_packets:
-            src_ip, dst_ip, src_port, dst_port, protocol = packet
-
-            if search_by == "Search by IP":
-                if search_term in src_ip or search_term in dst_ip:
-                    self.add_packet_to_table(src_ip, dst_ip, src_port, dst_port, protocol)
-
-            elif search_by == "Search by Protocol":
-                if search_term.lower() == protocol.lower():
-                    self.add_packet_to_table(src_ip, dst_ip, src_port, dst_port, protocol)
-
-        self.label.setText(f"Search completed for {search_term}.")
-
-    def update_ui(self):
-        # Scroll to the bottom to show the latest packet
-        if self.packet_table.rowCount() > 0:
-            self.packet_table.verticalScrollBar().setValue(self.packet_table.verticalScrollBar().maximum())
+    def block_website(self):
+        domain = self.website_input.text()
+        if domain:
+            try:
+                # Blocking the website for the entire network using DNS filtering
+                # For Linux: use `iptables` rules, for Windows a different approach might be needed
+                subprocess.run(['netsh', 'advfirewall', 'firewall', 'add', 'rule', f'name=Block {domain}', f'dir=out', f'action=block', f'remoteip={domain}'], check=True)
+                self.label.setText(f"Blocked website: {domain}")
+            except Exception as e:
+                self.label.setText(f"Error blocking website: {str(e)}")
 
     def stop_sniffing(self):
         self.sniffing = False
         self.analyze_button.setEnabled(True)
         self.stop_button.setEnabled(False)
-        self.label.setText("Stopped capturing packets.")
-        # Stop the timer
-        self.timer.stop()
+        self.label.setText("Stopped capturing network traffic.")
 
     def save_data(self):
-        with open('captured_packets.txt', 'w') as f:
-            for row in range(self.packet_table.rowCount()):
-                row_data = []
-                for column in range(self.packet_table.columnCount()):
-                    item = self.packet_table.item(row, column)
-                    row_data.append(item.text() if item else '')
-                f.write("\t".join(row_data) + "\n")
-        self.label.setText("Data saved to captured_packets.txt")
+        # Let user choose CSV or JSON
+        file_name, _ = QFileDialog.getSaveFileName(self, "Save Data", "", "CSV Files (*.csv);;JSON Files (*.json)")
+        if file_name:
+            if file_name.endswith(".csv"):
+                with open(file_name, "w", newline="") as csv_file:
+                    writer = csv.writer(csv_file)
+                    writer.writerow(["Source IP", "Destination IP", "Source Port", "Destination Port", "Protocol"])
+                    writer.writerows(self.captured_packets)
+            elif file_name.endswith(".json"):
+                with open(file_name, "w") as json_file:
+                    json.dump(self.captured_packets, json_file)
 
+            self.label.setText(f"Data saved to {file_name}")
+
+    def search_packets(self):
+        query = self.search_input.text().lower()
+        search_by = self.search_criteria.currentText()
+
+        # Clear the table before showing search results
+        self.packet_table.setRowCount(0)
+
+        if search_by == "Search by IP":
+            for packet in self.captured_packets:
+                if query in packet[0].lower() or query in packet[1].lower():
+                    self.add_packet_to_table(*packet)
+        elif search_by == "Search by Protocol":
+            for packet in self.captured_packets:
+                if query in packet[4].lower():
+                    self.add_packet_to_table(*packet)
+
+    def update_ui(self):
+        self.packet_count_label.setText(f"Packets Captured: {self.packet_count}")
+
+    def show_network_analyzer(self):
+        self.network_analyzer_layout()
+
+    def show_block_website(self):
+        self.block_website_layout()
 
 if __name__ == '__main__':
-    # run_as_admin()  # Ensure the script is run as an administrator
-
     app = QApplication(sys.argv)
-    firewall = FirewallApp()
-    firewall.show()
+    window = FirewallApp()
+    window.show()
     sys.exit(app.exec_())
