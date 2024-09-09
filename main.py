@@ -36,10 +36,15 @@ class FirewallApp(QMainWindow):
         self.stop_button.setEnabled(False)
         self.layout.addWidget(self.stop_button)
 
+        # Button to Save Data
+        self.save_button = QPushButton("Save Captured Data", self)
+        self.save_button.clicked.connect(self.save_data)
+        self.layout.addWidget(self.save_button)
+
         # Table to display captured packets
         self.packet_table = QTableWidget(self)
-        self.packet_table.setColumnCount(4)
-        self.packet_table.setHorizontalHeaderLabels(["Source IP", "Destination IP", "Source Port", "Destination Port"])
+        self.packet_table.setColumnCount(5)
+        self.packet_table.setHorizontalHeaderLabels(["Source IP", "Destination IP", "Source Port", "Destination Port", "Protocol"])
         self.layout.addWidget(self.packet_table)
 
         # Set equal column widths
@@ -82,7 +87,7 @@ class FirewallApp(QMainWindow):
         if not self.sniffing:
             return
 
-        # Filter for IP packets and display Source IP, Destination IP, Source Port, and Destination Port
+        # Filter for IP packets and display Source IP, Destination IP, Source Port, Destination Port, and Protocol
         if packet.haslayer(IP):
             src_ip = packet[IP].src
             dst_ip = packet[IP].dst
@@ -91,29 +96,36 @@ class FirewallApp(QMainWindow):
             if packet.haslayer(TCP):
                 src_port = packet[TCP].sport
                 dst_port = packet[TCP].dport
+                protocol = "TCP"
             elif packet.haslayer(UDP):
                 src_port = packet[UDP].sport
                 dst_port = packet[UDP].dport
+                protocol = "UDP"
             else:
                 src_port = "N/A"
                 dst_port = "N/A"
+                protocol = "Other"
 
             # Add packet info to the table
             row_position = self.packet_table.rowCount()
             self.packet_table.insertRow(row_position)  # Insert at the bottom
+
+            # Insert the correct data into the corresponding columns
             self.packet_table.setItem(row_position, 0, QTableWidgetItem(src_ip))
             self.packet_table.setItem(row_position, 1, QTableWidgetItem(dst_ip))
             self.packet_table.setItem(row_position, 2, QTableWidgetItem(str(src_port)))
             self.packet_table.setItem(row_position, 3, QTableWidgetItem(str(dst_port)))
+            self.packet_table.setItem(row_position, 4, QTableWidgetItem(protocol))
 
             # Center align the newly added items
-            for i in range(4):
+            for i in range(5):
                 item = self.packet_table.item(row_position, i)
                 item.setTextAlignment(Qt.AlignCenter)
 
             # Increment packet count
             self.packet_count += 1
             self.packet_count_label.setText(f"Packets Captured: {self.packet_count}")
+
 
     def update_ui(self):
         # Scroll to the bottom to show the latest packet
@@ -127,6 +139,16 @@ class FirewallApp(QMainWindow):
         self.label.setText("Stopped capturing packets.")
         # Stop the timer
         self.timer.stop()
+
+    def save_data(self):
+        with open('captured_packets.txt', 'w') as f:
+            for row in range(self.packet_table.rowCount()):
+                row_data = []
+                for column in range(self.packet_table.columnCount()):
+                    item = self.packet_table.item(row, column)
+                    row_data.append(item.text() if item else '')
+                f.write("\t".join(row_data) + "\n")
+        self.label.setText("Data saved to captured_packets.txt")
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
