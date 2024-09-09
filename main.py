@@ -1,8 +1,12 @@
 import sys
 import threading
-from PyQt5.QtWidgets import QApplication, QMainWindow, QPushButton, QLabel, QVBoxLayout, QWidget, QTableWidget, QTableWidgetItem, QHeaderView
+import subprocess  # To run firewall commands
+from PyQt5.QtWidgets import QApplication, QMainWindow, QPushButton, QLabel, QVBoxLayout, QWidget, QTableWidget, QTableWidgetItem, QHeaderView, QInputDialog
 from PyQt5.QtCore import Qt, QTimer
 from scapy.all import sniff, IP, TCP, UDP
+import ctypes
+
+
 
 class FirewallApp(QMainWindow):
     def __init__(self):
@@ -40,6 +44,11 @@ class FirewallApp(QMainWindow):
         self.save_button = QPushButton("Save Captured Data", self)
         self.save_button.clicked.connect(self.save_data)
         self.layout.addWidget(self.save_button)
+
+        # Block IP Button
+        self.block_ip_button = QPushButton("Block IP", self)
+        self.block_ip_button.clicked.connect(self.block_ip)
+        self.layout.addWidget(self.block_ip_button)
 
         # Table to display captured packets
         self.packet_table = QTableWidget(self)
@@ -126,6 +135,15 @@ class FirewallApp(QMainWindow):
             self.packet_count += 1
             self.packet_count_label.setText(f"Packets Captured: {self.packet_count}")
 
+    def block_ip(self):
+        ip, ok = QInputDialog.getText(self, 'Block IP', 'Enter IP address to block:')
+        if ok and ip:
+            try:
+                # Assuming Windows. For Linux, use `iptables`
+                subprocess.run(['netsh', 'advfirewall', 'firewall', 'add', 'rule', f'name=Block {ip}', f'dir=in', f'action=block', f'remoteip={ip}'], check=True)
+                self.label.setText(f"Blocked IP: {ip}")
+            except Exception as e:
+                self.label.setText(f"Error blocking IP: {str(e)}")
 
     def update_ui(self):
         # Scroll to the bottom to show the latest packet
@@ -150,7 +168,10 @@ class FirewallApp(QMainWindow):
                 f.write("\t".join(row_data) + "\n")
         self.label.setText("Data saved to captured_packets.txt")
 
+
 if __name__ == '__main__':
+    # run_as_admin()  # Ensure the script is run as an administrator
+
     app = QApplication(sys.argv)
     firewall = FirewallApp()
     firewall.show()
