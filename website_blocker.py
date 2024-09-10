@@ -1,22 +1,33 @@
-# website_blocker.py
-import os
+from PyQt5.QtWidgets import QLabel, QPushButton, QLineEdit, QVBoxLayout, QMessageBox
+import subprocess
 
 class WebsiteBlocker:
     def __init__(self):
-        self.hosts_file = "/etc/hosts"  # Path for hosts file
-        self.redirect_ip = "127.0.0.1"
+        pass
 
-    def block_websites(self, websites):
-        with open(self.hosts_file, 'a') as file:
-            for website in websites:
-                file.write(f"{self.redirect_ip} {website}\n")
-        print(f"Blocked websites: {', '.join(websites)}")
+    def create_layout(self, layout):
+        layout.clear()  # Clear the layout
+        self.label = QLabel("Enter the website domain to block:", layout.parentWidget())
+        layout.addWidget(self.label)
 
-    def unblock_websites(self, websites):
-        with open(self.hosts_file, 'r') as file:
-            lines = file.readlines()
-        with open(self.hosts_file, 'w') as file:
-            for line in lines:
-                if not any(website in line for website in websites):
-                    file.write(line)
-        print(f"Unblocked websites: {', '.join(websites)}")
+        self.website_input = QLineEdit(layout.parentWidget())
+        layout.addWidget(self.website_input)
+
+        self.block_button = QPushButton("Block Website", layout.parentWidget())
+        self.block_button.clicked.connect(self.block_website)
+        layout.addWidget(self.block_button)
+
+    def block_website(self):
+        domain = self.website_input.text().strip()
+
+        if domain:
+            try:
+                with open("/etc/hosts", "a") as hosts_file:
+                    hosts_file.write(f"127.0.0.1 {domain}\n")
+                QMessageBox.information(None, "Success", f"{domain} has been blocked.")
+            except PermissionError:
+                QMessageBox.critical(None, "Error", "Administrator privileges are required to block websites.")
+            except Exception as e:
+                QMessageBox.critical(None, "Error", f"An error occurred: {str(e)}")
+        else:
+            QMessageBox.warning(None, "Warning", "Please enter a valid domain.")

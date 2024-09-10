@@ -1,30 +1,9 @@
-# main.py
-from PyQt5 import QtWidgets
 import sys
-from gui import FirewallUI
-from network_analyzer import NetworkAnalyzer
-from website_blocker import WebsiteBlocker
+from PyQt5.QtWidgets import QApplication
+from gui import FirewallApp
 
-class FirewallApp:
-    def __init__(self):
-        self.network_analyzer = NetworkAnalyzer()
-        self.website_blocker = WebsiteBlocker()
-
-    def start_gui(self):
-        app = QtWidgets.QApplication(sys.argv)
-        window = FirewallUI()
-        window.show()
-        sys.exit(app.exec_())
-
-    def analyze_network(self):
-        self.network_analyzer.analyze_traffic()
-
-    def block_websites(self, websites):
-        self.website_blocker.block_websites(websites)
-
-    def unblock_websites(self, websites):
-        self.website_blocker.unblock_websites(websites)
-
-if __name__ == "__main__":
-    firewall_app = FirewallApp()
-    firewall_app.start_gui()
+if __name__ == '__main__':
+    app = QApplication(sys.argv)
+    window = FirewallApp()  # Initialize the GUI
+    window.show()  # Show the GUI
+    sys.exit(app.exec_())  # Start the application loop
