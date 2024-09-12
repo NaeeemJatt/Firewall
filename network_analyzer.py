@@ -1,119 +1,154 @@
-from PyQt5.QtWidgets import QLabel, QPushButton, QLineEdit, QComboBox, QTableWidget, QTableWidgetItem, QHeaderView, QVBoxLayout, QFileDialog, QMessageBox
-from PyQt5.QtCore import Qt, QTimer
-from scapy.all import sniff, IP, TCP, UDP, DNS, Raw
-from SnifferThread import SnifferThread
-import csv
-import json
+import threading
+from scapy.all import sniff, IP
+from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit, QComboBox, QTableWidget, QTableWidgetItem)
+from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from PyQt5.QtWidgets import QHeaderView
 
-class NetworkAnalyzer:
+class PacketCaptureThread(QThread):
+    packet_captured = pyqtSignal(object)
+
     def __init__(self):
-        self.packet_count = 0
-        self.sniffer_thread = None
-        self.captured_packets = []
-        self.timer = QTimer()
-    def update_ui(self):
-        # Update any UI elements that need refreshing
-        self.packet_count_label.setText(f"Packets Captured: {self.packet_count}")
+        super().__init__()
+        self.stop_event = threading.Event()
 
-    def create_layout(self, layout):
-        while layout.count():
-            child = layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
-        self.label = QLabel("Choose an action:", layout.parentWidget())
-        layout.addWidget(self.label)
-
-        self.analyze_button = QPushButton("Start Analyzing Network", layout.parentWidget())
-        self.analyze_button.clicked.connect(self.start_sniffing_thread)
-        layout.addWidget(self.analyze_button)
-
-        self.stop_button = QPushButton("Stop Capturing", layout.parentWidget())
-        self.stop_button.clicked.connect(self.stop_sniffing)
-        layout.addWidget(self.stop_button)
-
-        self.save_button = QPushButton("Save Captured Data", layout.parentWidget())
-        self.save_button.clicked.connect(self.save_data)
-        layout.addWidget(self.save_button)
-
-        self.search_input = QLineEdit(layout.parentWidget())
-        layout.addWidget(self.search_input)
-
-        self.search_criteria = QComboBox(layout.parentWidget())
-        self.search_criteria.addItems(["Search by IP", "Search by Protocol"])
-        layout.addWidget(self.search_criteria)
-
-        self.packet_table = QTableWidget(layout.parentWidget())
-        self.packet_table.setColumnCount(6)
-        self.packet_table.setHorizontalHeaderLabels(["Source IP", "Destination IP", "Source Port", "Destination Port", "Protocol", "Subprotocol"])
-        layout.addWidget(self.packet_table)
-
-        header = self.packet_table.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.Stretch)
-
-        self.packet_count_label = QLabel(f"Packets Captured: {self.packet_count}", layout.parentWidget())
-        layout.addWidget(self.packet_count_label)
-
-        # Timer for regular updates
-        self.timer.timeout.connect(self.update_ui)
-
-    def start_sniffing_thread(self):
-        self.packet_count = 0  # Reset packet counter
-        self.captured_packets.clear()  # Clear captured packets
-        self.label.setText("Capturing network traffic...")
-
-        # Create and start the sniffer thread
-        self.sniffer_thread = SnifferThread()
-        self.sniffer_thread.packet_signal.connect(self.process_packet)
-        self.sniffer_thread.start()
-
-        self.timer.start(100)
+    def run(self):
+        sniff(filter="", prn=self.process_packet, stop_filter=self.should_stop_sniff)
 
     def process_packet(self, packet):
-        if packet.haslayer(IP):
-            src_ip = packet[IP].src
-            dst_ip = packet[IP].dst
-            protocol, src_port, dst_port, subprotocol = self.extract_packet_info(packet)
-            self.captured_packets.append((src_ip, dst_ip, src_port, dst_port, protocol, subprotocol))
-            self.add_packet_to_table(src_ip, dst_ip, src_port, dst_port, protocol, subprotocol)
-            self.packet_count += 1
-            self.packet_count_label.setText(f"Packets Captured: {self.packet_count}")
+        if IP in packet:
+            self.packet_captured.emit(packet)
 
-    def extract_packet_info(self, packet):
-        if packet.haslayer(TCP):
-            return "TCP", packet[TCP].sport, packet[TCP].dport, "HTTP" if packet.haslayer(Raw) else "Other"
-        elif packet.haslayer(UDP):
-            return "UDP", packet[UDP].sport, packet[UDP].dport, "DNS" if packet.haslayer(DNS) else "Other"
-        else:
-            return "Other", "N/A", "N/A", "N/A"
+    def should_stop_sniff(self, packet):
+        return self.stop_event.is_set()
 
-    def stop_sniffing(self):
-        if self.sniffer_thread and self.sniffer_thread.isRunning():
-            self.sniffer_thread.packet_signal.disconnect(self.process_packet)
-            self.sniffer_thread.stop()
-            self.sniffer_thread.wait()
+    def stop(self):
+        self.stop_event.set()
 
-        self.analyze_button.setEnabled(True)
-        self.stop_button.setEnabled(False)
-        self.label.setText("Stopped capturing network traffic.")
-        self.timer.stop()
+class NetworkAnalyzer(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.init_ui()
+        self.packet_list = []  # To store packets
+        self.packet_capture_thread = None
 
-    def add_packet_to_table(self, src_ip, dst_ip, src_port, dst_port, protocol, subprotocol):
-        row_position = self.packet_table.rowCount()
-        self.packet_table.insertRow(row_position)
-        self.packet_table.setItem(row_position, 0, QTableWidgetItem(src_ip))
-        self.packet_table.setItem(row_position, 1, QTableWidgetItem(dst_ip))
-        self.packet_table.setItem(row_position, 2, QTableWidgetItem(str(src_port)))
-        self.packet_table.setItem(row_position, 3, QTableWidgetItem(str(dst_port)))
-        self.packet_table.setItem(row_position, 4, QTableWidgetItem(protocol))
-        self.packet_table.setItem(row_position, 5, QTableWidgetItem(subprotocol))
+    def init_ui(self):
+        self.layout = QVBoxLayout()
 
-    def save_data(self):
-        file_name, _ = QFileDialog.getSaveFileName(None, "Save Data", "", "CSV Files (*.csv);;JSON Files (*.json);;TXT Files (*.txt)")
-        if file_name.endswith(".csv"):
-            with open(file_name, "w", newline="") as csv_file:
-                writer = csv.writer(csv_file)
-                writer.writerow(["Source IP", "Destination IP", "Source Port", "Destination Port", "Protocol", "Subprotocol"])
-                writer.writerows(self.captured_packets)
-        elif file_name.endswith(".json"):
-            with open(file_name, "w") as json_file:
-                json.dump(self.captured_packets, json_file)
+        # Create button layout
+        self.button_layout = QHBoxLayout()
+        self.start_button = QPushButton('Start', self)
+        self.stop_button = QPushButton('Stop', self)
+        self.start_button.setFixedSize(100, 30)
+        self.stop_button.setFixedSize(100, 30)
+        self.start_button.setStyleSheet("""
+            QPushButton {
+                background-color: lightgreen;
+                border: 1px solid green;
+            }
+            QPushButton:hover {
+                background-color: darkgreen;
+                color: white;
+            }
+        """)
+        self.stop_button.setStyleSheet("""
+            QPushButton {
+                background-color: lightcoral;
+                border: 1px solid red;
+            }
+            QPushButton:hover {
+                background-color: darkred;
+                color: white;
+            }
+        """)
+        self.button_layout.addWidget(self.start_button)
+        self.button_layout.addWidget(self.stop_button)
+
+        # Create control layout
+        self.control_layout = QHBoxLayout()
+        self.dropdown = QComboBox(self)
+        self.dropdown.addItems(['IP', 'Protocol'])
+        self.dropdown.setFixedWidth(100)  # Decrease width of the dropdown button
+        self.input_field = QLineEdit(self)
+        self.input_field.setFixedWidth(600)  # Decrease width of the search box
+        self.search_button = QPushButton('Search', self)
+        self.search_button.setFixedSize(50, 30)
+        self.control_layout.addWidget(self.dropdown)
+        self.control_layout.addWidget(self.input_field)
+        self.control_layout.addWidget(self.search_button)
+
+        # Create table for packet display
+        self.packet_table = QTableWidget()
+        self.packet_table.setColumnCount(5)
+        self.packet_table.setHorizontalHeaderLabels(['Source IP', 'Source Port', 'Destination IP', 'Destination Port', 'Protocol'])
+        self.packet_table.horizontalHeader().setStretchLastSection(True)
+        
+        # Packet count label
+        self.packet_count_label = QLabel('Packet Count: 0')
+
+        # Adding widgets to layout
+        self.layout.addLayout(self.button_layout)
+        self.layout.addLayout(self.control_layout)
+        self.layout.addWidget(self.packet_table)
+        self.layout.addWidget(self.packet_count_label)
+
+        self.setLayout(self.layout)
+
+        # Connect buttons to functions
+        self.start_button.clicked.connect(self.start_capture)
+        self.stop_button.clicked.connect(self.stop_capture)
+        self.search_button.clicked.connect(self.search_traffic)
+
+    def start_capture(self):
+        # Start the packet capture thread
+        self.packet_capture_thread = PacketCaptureThread()
+        self.packet_capture_thread.packet_captured.connect(self.process_packet)
+        self.packet_capture_thread.start()
+
+    def stop_capture(self):
+        # Stop the packet capture thread
+        if self.packet_capture_thread:
+            self.packet_capture_thread.stop()
+            self.packet_capture_thread.quit()
+            self.packet_capture_thread.wait()
+            self.packet_capture_thread = None
+
+    def process_packet(self, packet):
+        if IP in packet:
+            source_ip = packet[IP].src
+            destination_ip = packet[IP].dst
+            source_port = packet.sport if packet.haslayer('TCP') or packet.haslayer('UDP') else 'N/A'
+            destination_port = packet.dport if packet.haslayer('TCP') or packet.haslayer('UDP') else 'N/A'
+            protocol = packet[IP].proto
+            info = f"Src Port: {source_port} Dst Port: {destination_port}" if packet.haslayer('TCP') or packet.haslayer('UDP') else ""
+            self.packet_list.append([source_ip, source_port, destination_ip, destination_port, protocol, info])
+            self.update_ui()
+
+    def update_ui(self):
+        # Update the table with packet details
+        self.packet_table.setRowCount(len(self.packet_list))
+        for row, packet in enumerate(self.packet_list):
+            for col, item in enumerate(packet):
+                item_widget = QTableWidgetItem(str(item))
+                item_widget.setTextAlignment(Qt.AlignCenter)  # Center-align text
+                self.packet_table.setItem(row, col, item_widget)
+        
+        # Ensure all columns have the same width and occupy full space
+        header = self.packet_table.horizontalHeader()
+        for i in range(self.packet_table.columnCount()):
+            header.setSectionResizeMode(i, QHeaderView.Stretch)  # Stretch columns to fit available space
+
+        self.packet_count_label.setText(f'Packet Count: {len(self.packet_list)}')
+
+    def search_traffic(self):
+        search_type = self.dropdown.currentText()
+        search_value = self.input_field.text()
+        filtered_packets = [p for p in self.packet_list if search_value in str(p)]
+        self.packet_table.setRowCount(len(filtered_packets))
+        for row, packet in enumerate(filtered_packets):
+            for col, item in enumerate(packet):
+                item_widget = QTableWidgetItem(str(item))
+                item_widget.setTextAlignment(Qt.AlignCenter)  # Center-align text
+                self.packet_table.setItem(row, col, item_widget)
+        self.packet_table.resizeColumnsToContents()
+
+# This class should be imported and used within your main PyQt application context.

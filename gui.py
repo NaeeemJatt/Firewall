@@ -1,61 +1,60 @@
-from PyQt5.QtWidgets import QMainWindow, QMenuBar, QLabel, QVBoxLayout, QHBoxLayout, QWidget, QPushButton
-from PyQt5.QtCore import QTimer
-from Network_Analyzer import NetworkAnalyzer
-from Website_blocker import WebsiteBlocker
+# gui.py
 
-class FirewallApp(QMainWindow):
+from PyQt5.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QStackedWidget
+from network_analyzer import NetworkAnalyzer
+
+class FirewallGUI(QWidget):
     def __init__(self):
         super().__init__()
-
-        # Packet Analyzer and Website Blocker will be used across layouts
-        self.network_analyzer = NetworkAnalyzer()
-        self.website_blocker = WebsiteBlocker()
-
         self.initUI()
 
     def initUI(self):
-        self.setWindowTitle('Firewall')
-        self.setGeometry(100, 100, 900, 500)
+        self.setWindowTitle('Firewall Tool')
+        self.setGeometry(100, 100, 800, 600)
 
-        # Create Menu Bar
-        self.menu_bar = QMenuBar(self)
-        self.setMenuBar(self.menu_bar)
+        # Create the main layout
+        self.main_layout = QVBoxLayout()
 
-        # Create central widget and layout for the window
-        container = QWidget(self)
-        self.setCentralWidget(container)
+        # Create a horizontal layout for the top-left navigation buttons
+        self.nav_layout = QHBoxLayout()
 
-        # Define a layout for the central widget
-        self.layout = QVBoxLayout(container)
+        # Create buttons for navigation
+        self.btn_na = QPushButton('Network Analyzer', self)
+        self.btn_na.setFixedSize(150, 50)
+        self.btn_na.clicked.connect(self.show_network_analyzer)
 
-        # Add a horizontal layout for Network Analyzer and Website Blocker buttons
-        self.button_layout = QHBoxLayout()
+        self.btn_bw = QPushButton('Block Website', self)
+        self.btn_bw.setFixedSize(150, 50)
+        self.btn_bw.clicked.connect(self.show_block_website)
 
-        self.analyze_network_button = QPushButton("Analyze Network", self)
-        self.analyze_network_button.setFixedHeight(50)
-        self.analyze_network_button.setFixedWidth(450)
-        self.analyze_network_button.clicked.connect(self.show_network_analyzer)
-        self.button_layout.addWidget(self.analyze_network_button)
+        # Add navigation buttons to the nav layout
+        self.nav_layout.addWidget(self.btn_na)
+        self.nav_layout.addWidget(self.btn_bw)
 
-        self.block_website_button = QPushButton("Block Website", self)
-        self.block_website_button.setFixedHeight(50)
-        self.block_website_button.setFixedWidth(450)
-        self.block_website_button.clicked.connect(self.show_block_website)
-        self.button_layout.addWidget(self.block_website_button)
+        # Add nav layout to the main layout
+        self.main_layout.addLayout(self.nav_layout)
 
-        self.layout.addLayout(self.button_layout)
+        # Create a stacked widget to switch between Network Analyzer and Block Website screens
+        self.stack = QStackedWidget(self)
 
-        # Start with Network Analyzer layout
-        self.network_analyzer_layout()
+        # Create instances of both screens
+        self.network_analyzer_screen = NetworkAnalyzer()
+        self.block_website_screen = QWidget()  # Placeholder for Block Website functionality
 
-    def network_analyzer_layout(self):
-        self.network_analyzer.create_layout(self.layout)
+        # Add both screens to the stacked widget
+        self.stack.addWidget(self.network_analyzer_screen)
+        self.stack.addWidget(self.block_website_screen)
 
-    def block_website_layout(self):
-        self.website_blocker.create_layout(self.layout)
+        # Add the stack to the main layout
+        self.main_layout.addWidget(self.stack)
+
+        # Set the layout
+        self.setLayout(self.main_layout)
 
     def show_network_analyzer(self):
-        self.network_analyzer_layout()
+        # Show the Network Analyzer screen
+        self.stack.setCurrentWidget(self.network_analyzer_screen)
 
     def show_block_website(self):
-        self.block_website_layout()
+        # Show the Block Website screen (placeholder for now)
+        self.stack.setCurrentWidget(self.block_website_screen)
