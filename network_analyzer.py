@@ -1,7 +1,8 @@
 import threading
+import time
 from scapy.all import sniff, IP
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit, QComboBox, QTableWidget, QTableWidgetItem)
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt5.QtWidgets import QHeaderView
 
 class PacketCaptureThread(QThread):
@@ -69,7 +70,7 @@ class NetworkAnalyzer(QWidget):
         self.dropdown.addItems(['IP', 'Protocol'])
         self.dropdown.setFixedWidth(100)  # Decrease width of the dropdown button
         self.input_field = QLineEdit(self)
-        self.input_field.setFixedWidth(600)  # Decrease width of the search box
+        self.input_field.setFixedWidth(150)  # Decrease width of the search box
         self.search_button = QPushButton('Search', self)
         self.search_button.setFixedSize(50, 30)
         self.control_layout.addWidget(self.dropdown)
@@ -98,11 +99,19 @@ class NetworkAnalyzer(QWidget):
         self.stop_button.clicked.connect(self.stop_capture)
         self.search_button.clicked.connect(self.search_traffic)
 
+        # Timer for periodic UI updates
+        self.ui_update_timer = QTimer()
+        self.ui_update_timer.timeout.connect(self.update_ui)
+        self.ui_update_timer.start(10)  # Update every 10 ms
+
     def start_capture(self):
         # Start the packet capture thread
         self.packet_capture_thread = PacketCaptureThread()
         self.packet_capture_thread.packet_captured.connect(self.process_packet)
         self.packet_capture_thread.start()
+        
+        # Ensure UI is properly aligned
+        self.update_ui()
 
     def stop_capture(self):
         # Stop the packet capture thread
@@ -121,12 +130,51 @@ class NetworkAnalyzer(QWidget):
             protocol = packet[IP].proto
             info = f"Src Port: {source_port} Dst Port: {destination_port}" if packet.haslayer('TCP') or packet.haslayer('UDP') else ""
             self.packet_list.append([source_ip, source_port, destination_ip, destination_port, protocol, info])
-            self.update_ui()
 
     def update_ui(self):
         # Update the table with packet details
         self.packet_table.setRowCount(len(self.packet_list))
         for row, packet in enumerate(self.packet_list):
+            for col, item in enumerate(packet):
+                item_widget = QTableWidgetItem(str(item))
+                item_widget.setTextAlignment(Qt.AlignCenter)  # Center-align text
+                self.packet_table.setItem(row, col, item_widget)
+
+        # Ensure all columns have the same width and occupy full space
+        header = self.packet_table.horizontalHeader()
+        for i in range(self.packet_table.columnCount()):
+            header.setSectionResizeMode(i, QHeaderView.Stretch)  # Stretch columns to fit available space
+
+        # Force a layout update to ensure proper alignment
+        self.packet_table.resizeColumnsToContents()
+
+        # Update packet count label
+        self.packet_count_label.setText(f'Packet Count: {len(self.packet_list)}')
+
+        # Ensure proper alignment of all columns
+        for i in range(self.packet_table.columnCount()):
+            self.packet_table.horizontalHeader().setSectionResizeMode(i, QHeaderView.Stretch)
+
+
+    def search_traffic(self):
+        search_type = self.dropdown.currentText()
+        search_value = self.input_field.text()
+        
+        if not search_value:
+            # If search value is empty, show all packets
+            filtered_packets = self.packet_list
+        else:
+            # Filter packets based on the search type
+            if search_type == 'IP':
+                filtered_packets = [p for p in self.packet_list if search_value in p[0] or search_value in p[2]]
+            elif search_type == 'Protocol':
+                filtered_packets = [p for p in self.packet_list if search_value == str(p[4])]
+            else:
+                filtered_packets = self.packet_list  # Default case if search type is unknown
+
+        # Update the table with filtered packets
+        self.packet_table.setRowCount(len(filtered_packets))
+        for row, packet in enumerate(filtered_packets):
             for col, item in enumerate(packet):
                 item_widget = QTableWidgetItem(str(item))
                 item_widget.setTextAlignment(Qt.AlignCenter)  # Center-align text
@@ -137,18 +185,5 @@ class NetworkAnalyzer(QWidget):
         for i in range(self.packet_table.columnCount()):
             header.setSectionResizeMode(i, QHeaderView.Stretch)  # Stretch columns to fit available space
 
-        self.packet_count_label.setText(f'Packet Count: {len(self.packet_list)}')
-
-    def search_traffic(self):
-        search_type = self.dropdown.currentText()
-        search_value = self.input_field.text()
-        filtered_packets = [p for p in self.packet_list if search_value in str(p)]
-        self.packet_table.setRowCount(len(filtered_packets))
-        for row, packet in enumerate(filtered_packets):
-            for col, item in enumerate(packet):
-                item_widget = QTableWidgetItem(str(item))
-                item_widget.setTextAlignment(Qt.AlignCenter)  # Center-align text
-                self.packet_table.setItem(row, col, item_widget)
-        self.packet_table.resizeColumnsToContents()
-
-# This class should be imported and used within your main PyQt application context.
+        # Scroll to the bottom of the table to show filtered results
+        self.packet_table.scrollToBottom()
