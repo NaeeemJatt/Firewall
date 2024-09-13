@@ -80,7 +80,7 @@ class NetworkAnalyzer(QWidget):
         # Create table for packet display
         self.packet_table = QTableWidget()
         self.packet_table.setColumnCount(5)
-        self.packet_table.setHorizontalHeaderLabels(['Source IP', 'Source Port', 'Destination IP', 'Destination Port', 'Protocol'])
+        self.packet_table.setHorizontalHeaderLabels(['Source IP', 'Destination IP', 'Source Port', 'Destination Port', 'Protocol'])
         self.packet_table.horizontalHeader().setStretchLastSection(True)
         
         # Packet count label
@@ -129,7 +129,8 @@ class NetworkAnalyzer(QWidget):
             destination_port = packet.dport if packet.haslayer('TCP') or packet.haslayer('UDP') else 'N/A'
             protocol = packet[IP].proto
             info = f"Src Port: {source_port} Dst Port: {destination_port}" if packet.haslayer('TCP') or packet.haslayer('UDP') else ""
-            self.packet_list.append([source_ip, source_port, destination_ip, destination_port, protocol, info])
+            self.packet_list.append([source_ip, destination_ip, source_port, destination_port, protocol])
+            self.packet_table.scrollToBottom()
 
     def update_ui(self):
         # Update the table with packet details
@@ -184,6 +185,3 @@ class NetworkAnalyzer(QWidget):
         header = self.packet_table.horizontalHeader()
         for i in range(self.packet_table.columnCount()):
             header.setSectionResizeMode(i, QHeaderView.Stretch)  # Stretch columns to fit available space
-
-        # Scroll to the bottom of the table to show filtered results
-        self.packet_table.scrollToBottom()
