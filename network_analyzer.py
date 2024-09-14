@@ -1,10 +1,12 @@
 import threading
+import json
+import csv
 from scapy.all import sniff, IP
-from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit, QComboBox, QTableWidget, QTableWidgetItem)
+from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit, QComboBox, QTableWidget, QTableWidgetItem, QFileDialog, QMessageBox)
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 import psutil
-from PyQt5.QtWidgets import QTableWidgetItem, QHeaderView
-from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import QHeaderView
+
 
 
 # Class for capturing packets in a separate thread
@@ -68,7 +70,9 @@ class NetworkAnalyzer(QWidget):
             }
         """)
         self.setup_buttons()
-
+        self.save_button = QPushButton('Save File', self)
+        self.save_button.setFixedSize(100, 30)
+        self.save_button.clicked.connect(self.save_file)
 
 
         # Interface selection dropdown
@@ -158,12 +162,33 @@ class NetworkAnalyzer(QWidget):
 
     # Start capturing packets
     def start_capture(self):
+        if self.packet_list and not self.packet_saved:
+            reply = QMessageBox.question(self, 'Save File', 'Do you want to save the captured packets before restarting?', QMessageBox.Yes | QMessageBox.No)
+            if reply == QMessageBox.Yes:
+                self.save_file()
+        
+        # Continue with starting the capture
         selected_iface = self.interface_map[self.interface_dropdown.currentText()]
-        print(f"Starting capture on interface: {selected_iface}")
-
         self.packet_capture_thread = PacketCaptureThread(selected_iface)
         self.packet_capture_thread.packet_captured.connect(self.process_packet)
         self.packet_capture_thread.start()
+
+
+    def switch_to_block_website(self):
+        if self.packet_list and not self.packet_saved:
+            reply = QMessageBox.question(self, 'Save File', 'Do you want to save the captured packets before switching?', QMessageBox.Yes | QMessageBox.No)
+            if reply == QMessageBox.Yes:
+                self.save_file()
+        
+        # Proceed with switching section
+        self.show_block_website_section()
+
+    def save_file(self):
+        if not self.packet_list:
+            self.show_message("No packets captured yet. Please capture packets first.")
+            return
+    
+    # Proceed with save logic...
 
     # Stop packet capture
     def stop_capture(self):
@@ -217,6 +242,42 @@ class NetworkAnalyzer(QWidget):
                 filtered_packets = [p for p in self.packet_list if search_value == str(p[4])]
 
             self.update_search_table(filtered_packets)
+
+        # Save file functionality
+        def save_file(self):
+            if not self.packet_list:
+                self.show_message("No packets captured yet. Please capture packets first.")
+                return
+            
+            options = QFileDialog.Options()
+            file_name, _ = QFileDialog.getSaveFileName(self, "Save Packet File", "", "JSON Files (*.json);;CSV Files (*.csv);;PCAP Files (*.pcap)", options=options)
+            
+            if file_name:
+                if file_name.endswith('.json'):
+                    self.save_as_json(file_name)
+                elif file_name.endswith('.csv'):
+                    self.save_as_csv(file_name)
+                elif file_name.endswith('.pcap'):
+                    self.save_as_pcap(file_name)
+
+        # Saving methods
+        def save_as_json(self, file_name):
+            with open(file_name, 'w') as f:
+                json.dump(self.packet_list, f)
+
+        def save_as_csv(self, file_name):
+            with open(file_name, 'w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(['Source IP', 'Destination IP', 'Source Port', 'Destination Port', 'Protocol'])
+                writer.writerows(self.packet_list)
+
+        def save_as_pcap(self, file_name):
+            # Implement logic to save as PCAP
+            pass
+
+
+
+
 
     # Update search table with filtered packets
     def update_search_table(self, filtered_packets):
