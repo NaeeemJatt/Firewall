@@ -1,15 +1,19 @@
 import threading
-from scapy.all import sniff, IP, get_if_list
+from scapy.all import sniff, IP
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit, QComboBox, QTableWidget, QTableWidgetItem)
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
-from PyQt5.QtWidgets import QHeaderView
+import psutil
+from PyQt5.QtWidgets import QTableWidgetItem, QHeaderView
+from PyQt5.QtCore import Qt
 
+
+# Class for capturing packets in a separate thread
 class PacketCaptureThread(QThread):
     packet_captured = pyqtSignal(object)
 
     def __init__(self, iface):
         super().__init__()
-        self.iface = iface  # Store the interface name
+        self.iface = iface
         self.stop_event = threading.Event()
 
     def run(self):
@@ -25,30 +29,31 @@ class PacketCaptureThread(QThread):
     def stop(self):
         self.stop_event.set()
 
-
+# Main UI for network analyzer
 class NetworkAnalyzer(QWidget):
     def __init__(self):
         super().__init__()
+        self.packet_list = []  # Stores all captured packets
+        self.packet_capture_thread = None  # Will hold the capture thread
+        self.search_table = None  # Holds the reference to the search results table
+        self.interface_map = {}  # Mapping of interface friendly names to actual network interfaces
         self.init_ui()
-        self.packet_list = []  # To store packets
-        self.packet_capture_thread = None
 
+    # Initialize the UI elements
     def init_ui(self):
         self.layout = QVBoxLayout()
 
-        # Create button layout
+        # Set up the button layout
         self.button_layout = QHBoxLayout()
         self.start_button = QPushButton('Start', self)
         self.stop_button = QPushButton('Stop', self)
-        self.start_button.setFixedSize(100, 30)
-        self.stop_button.setFixedSize(100, 30)
         self.start_button.setStyleSheet("""
             QPushButton {
                 background-color: lightgreen;
-                border: 1px solid green;
+                border: 1px solid black;
             }
             QPushButton:hover {
-                background-color: darkgreen;
+                background-color: red;
                 color: white;
             }
         """)
@@ -62,81 +67,113 @@ class NetworkAnalyzer(QWidget):
                 color: white;
             }
         """)
-        self.button_layout.addWidget(self.start_button)
-        self.button_layout.addWidget(self.stop_button)
+        self.setup_buttons()
+
+
 
         # Interface selection dropdown
         self.interface_dropdown = QComboBox(self)
-        self.interfaces = get_if_list()  # Get available network interfaces
+        self.interfaces, self.interface_map = self.get_interfaces()
         self.interface_dropdown.addItems(self.interfaces)
-        self.interface_dropdown.setFixedWidth(150)
         self.interface_label = QLabel('Select Interface: ')
-        
-        # Create control layout
-        self.control_layout = QHBoxLayout()
-        self.control_layout.addWidget(self.interface_label)
-        self.control_layout.addWidget(self.interface_dropdown)
-        
-        # Filter options (for search by IP or Protocol)
-        self.filter_dropdown = QComboBox(self)
-        self.filter_dropdown.addItems(['IP', 'Protocol'])
-        self.filter_dropdown.setFixedWidth(100)
-        self.input_field = QLineEdit(self)
-        self.input_field.setFixedWidth(150)
-        self.search_button = QPushButton('Search', self)
-        self.search_button.setFixedSize(50, 30)
-        self.control_layout.addWidget(self.filter_dropdown)
-        self.control_layout.addWidget(self.input_field)
-        self.control_layout.addWidget(self.search_button)
 
-        # Create table for packet display
-        self.packet_table = QTableWidget()
-        self.packet_table.setColumnCount(5)
-        self.packet_table.setHorizontalHeaderLabels(['Source IP', 'Destination IP', 'Source Port', 'Destination Port', 'Protocol'])
-        self.packet_table.horizontalHeader().setStretchLastSection(True)
-        
-        # Packet count label
+        # Control layout (interface selection, search options)
+        self.control_layout = QHBoxLayout()
+        self.setup_controls()
+
+        # Create the table for packet display
+        self.packet_table = self.setup_packet_table()
         self.packet_count_label = QLabel('Packet Count: 0')
 
-        # Adding widgets to layout
+        # Search result table
+        self.search_table = self.setup_search_table()
+
+        # Add widgets to layout
         self.layout.addLayout(self.button_layout)
         self.layout.addLayout(self.control_layout)
         self.layout.addWidget(self.packet_table)
+        self.layout.addWidget(self.search_table)
         self.layout.addWidget(self.packet_count_label)
-
         self.setLayout(self.layout)
-
-        # Connect buttons to functions
-        self.start_button.clicked.connect(self.start_capture)
-        self.stop_button.clicked.connect(self.stop_capture)
-        self.search_button.clicked.connect(self.search_traffic)
 
         # Timer for periodic UI updates
         self.ui_update_timer = QTimer()
         self.ui_update_timer.timeout.connect(self.update_ui)
-        self.ui_update_timer.start(10)  # Update every 10 ms
+        self.ui_update_timer.start(10)  # Updates every 10 ms
 
+    # Setup packet capture start and stop buttons
+    def setup_buttons(self):
+        self.start_button.setFixedSize(100, 30)
+        self.stop_button.setFixedSize(100, 30)
+        self.button_layout.addWidget(self.start_button)
+        self.button_layout.addWidget(self.stop_button)
+
+        # Connect buttons to functions
+        self.start_button.clicked.connect(self.start_capture)
+        self.stop_button.clicked.connect(self.stop_capture)
+
+    # Setup control panel (interface dropdown, search box)
+    def setup_controls(self):
+        self.filter_dropdown = QComboBox(self)
+        self.filter_dropdown.addItems(['IP', 'Protocol'])
+        self.input_field = QLineEdit(self)
+        #self.input_field.setFixedWidth(250)
+        self.search_button = QPushButton('Search', self)
+        self.search_button.setFixedSize(100,30)
+        self.search_button.setStyleSheet("""
+            QPushButton {
+                background-color: lightgreen;
+                border: 1px solid blue;
+            }
+            QPushButton:hover {
+                background-color: zinc;
+                color: white;
+            }
+        """)
+        self.control_layout.addWidget(self.interface_label)
+        self.control_layout.addWidget(self.interface_dropdown)
+        self.control_layout.addWidget(self.filter_dropdown)
+        self.control_layout.addWidget(self.input_field)
+        self.control_layout.addWidget(self.search_button)
+
+        # Connect search button to search function
+        self.search_button.clicked.connect(self.search_traffic)
+
+    # Create table for displaying packets
+    def setup_packet_table(self):
+        table = QTableWidget()
+        table.setColumnCount(5)
+        table.setHorizontalHeaderLabels(['Source IP', 'Destination IP', 'Source Port', 'Destination Port', 'Protocol'])
+        table.horizontalHeader().setStretchLastSection(True)
+        return table
+
+    # Create a search table for displaying filtered packets
+    def setup_search_table(self):
+        table = QTableWidget()
+        table.setColumnCount(5)
+        table.setHorizontalHeaderLabels(['Source IP', 'Destination IP', 'Source Port', 'Destination Port', 'Protocol'])
+        table.horizontalHeader().setStretchLastSection(True)
+        table.setVisible(False)  # Hide initially
+        return table
+
+    # Start capturing packets
     def start_capture(self):
-        # Get the selected interface
-        selected_iface = self.interface_dropdown.currentText()
+        selected_iface = self.interface_map[self.interface_dropdown.currentText()]
         print(f"Starting capture on interface: {selected_iface}")
 
-        # Start the packet capture thread on the selected interface
         self.packet_capture_thread = PacketCaptureThread(selected_iface)
         self.packet_capture_thread.packet_captured.connect(self.process_packet)
         self.packet_capture_thread.start()
-        
-        # Ensure UI is properly aligned
-        self.update_ui()
 
+    # Stop packet capture
     def stop_capture(self):
-        # Stop the packet capture thread
         if self.packet_capture_thread:
             self.packet_capture_thread.stop()
             self.packet_capture_thread.quit()
             self.packet_capture_thread.wait()
             self.packet_capture_thread = None
 
+    # Process captured packet and add to list
     def process_packet(self, packet):
         if IP in packet:
             source_ip = packet[IP].src
@@ -147,6 +184,37 @@ class NetworkAnalyzer(QWidget):
             self.packet_list.append([source_ip, destination_ip, source_port, destination_port, protocol])
             self.packet_table.scrollToBottom()
 
+    # Search packets based on user input
+    def search_traffic(self):
+        search_type = self.filter_dropdown.currentText()
+        search_value = self.input_field.text().strip()
+
+        if not search_value:
+            self.packet_table.setVisible(True)
+            self.search_table.setVisible(False)
+            self.update_ui()  # Show all packets
+        else:
+            filtered_packets = []
+            if search_type == 'IP':
+                filtered_packets = [p for p in self.packet_list if search_value in p[0] or search_value in p[1]]
+            elif search_type == 'Protocol':
+                filtered_packets = [p for p in self.packet_list if search_value == str(p[4])]
+
+            self.update_search_table(filtered_packets)
+
+    # Update search table with filtered packets
+    def update_search_table(self, filtered_packets):
+        self.search_table.setRowCount(len(filtered_packets))
+        for row, packet in enumerate(filtered_packets):
+            for col, item in enumerate(packet):
+                item_widget = QTableWidgetItem(str(item))
+                item_widget.setTextAlignment(Qt.AlignCenter)
+                self.search_table.setItem(row, col, item_widget)
+
+        self.packet_table.setVisible(False)
+        self.search_table.setVisible(True)
+
+    # Periodically update the main packet table
     def update_ui(self):
         # Update the table with packet details
         self.packet_table.setRowCount(len(self.packet_list))
@@ -156,168 +224,28 @@ class NetworkAnalyzer(QWidget):
                 item_widget.setTextAlignment(Qt.AlignCenter)  # Center-align text
                 self.packet_table.setItem(row, col, item_widget)
 
-        # Ensure all columns have the same width and occupy full space
+        # Ensure all columns have the same width and occupy full space equally
         header = self.packet_table.horizontalHeader()
         for i in range(self.packet_table.columnCount()):
-            header.setSectionResizeMode(i, QHeaderView.Stretch)  # Stretch columns to fit available space
-
-        # Force a layout update to ensure proper alignment
-        self.packet_table.resizeColumnsToContents()
-
+            header.setSectionResizeMode(i, QHeaderView.Stretch)  # Make all columns the same width
+        
         # Update packet count label
         self.packet_count_label.setText(f'Packet Count: {len(self.packet_list)}')
 
-        # Ensure proper alignment of all columns
-        for i in range(self.packet_table.columnCount()):
-            self.packet_table.horizontalHeader().setSectionResizeMode(i, QHeaderView.Stretch)
+        # Update search table layout if visible
+        if self.search_table.isVisible():
+            self.search_table.setRowCount(len(self.packet_list))
+            for row, packet in enumerate(self.packet_list):
+                for col, item in enumerate(packet):
+                    item_widget = QTableWidgetItem(str(item))
+                    item_widget.setTextAlignment(Qt.AlignCenter)  # Center-align text
+                    self.search_table.setItem(row, col, item_widget)
+            
+            header = self.search_table.horizontalHeader()
+            for i in range(self.search_table.columnCount()):
+                header.setSectionResizeMode(i, QHeaderView.Stretch)  # Make all columns the same width
 
-
-    def search_traffic(self):
-        search_type = self.filter_dropdown.currentText()
-        search_value = self.input_field.text()
-        
-        if not search_value:
-            # If search value is empty, show all packets
-            filtered_packets = self.packet_list
-        else:
-            # Filter packets based on the search type
-            if search_type == 'IP':
-                filtered_packets = [p for p in self.packet_list if search_value in p[0] or search_value in p[1]]
-            elif search_type == 'Protocol':
-                filtered_packets = [p for p in self.packet_list if search_value == str(p[4])]
-            else:
-                filtered_packets = self.packet_list  # Default case if search type is unknown
-
-        # Update the table with filtered packets
-        self.packet_table.setRowCount(len(filtered_packets))
-        for row, packet in enumerate(filtered_packets):
-            for col, item in enumerate(packet):
-                item_widget = QTableWidgetItem(str(item))
-                item_widget.setTextAlignment(Qt.AlignCenter)  # Center-align text
-                self.packet_table.setItem(row, col, item_widget)
-        
-        # Ensure all columns have the same width and occupy full space
-        header = self.packet_table.horizontalHeader()
-        for i in range(self.packet_table.columnCount()):
-            header.setSectionResizeMode(i, QHeaderView.Stretch)
-import psutil
-from scapy.all import sniff, IP
-from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit, QComboBox, QTableWidget, QTableWidgetItem)
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
-from PyQt5.QtWidgets import QHeaderView
-
-class PacketCaptureThread(QThread):
-    packet_captured = pyqtSignal(object)
-
-    def __init__(self, iface):
-        super().__init__()
-        self.iface = iface  # Store the interface name
-        self.stop_event = threading.Event()
-
-    def run(self):
-        sniff(iface=self.iface, prn=self.process_packet, stop_filter=self.should_stop_sniff)
-
-    def process_packet(self, packet):
-        if IP in packet:
-            self.packet_captured.emit(packet)
-
-    def should_stop_sniff(self, packet):
-        return self.stop_event.is_set()
-
-    def stop(self):
-        self.stop_event.set()
-
-
-class NetworkAnalyzer(QWidget):
-    def __init__(self):
-        super().__init__()
-        self.init_ui()
-        self.packet_list = []  # To store packets
-        self.packet_capture_thread = None
-
-    def init_ui(self):
-        self.layout = QVBoxLayout()
-
-        # Create button layout
-        self.button_layout = QHBoxLayout()
-        self.start_button = QPushButton('Start', self)
-        self.stop_button = QPushButton('Stop', self)
-        self.start_button.setFixedSize(100, 30)
-        self.stop_button.setFixedSize(100, 30)
-        self.start_button.setStyleSheet("""
-            QPushButton {
-                background-color: lightgreen;
-                border: 1px solid green;
-            }
-            QPushButton:hover {
-                background-color: darkgreen;
-                color: white;
-            }
-        """)
-        self.stop_button.setStyleSheet("""
-            QPushButton {
-                background-color: lightcoral;
-                border: 1px solid red;
-            }
-            QPushButton:hover {
-                background-color: darkred;
-                color: white;
-            }
-        """)
-        self.button_layout.addWidget(self.start_button)
-        self.button_layout.addWidget(self.stop_button)
-
-        # Interface selection dropdown
-        self.interface_dropdown = QComboBox(self)
-        self.interfaces, self.interface_map = self.get_interfaces()  # Get human-readable names
-        self.interface_dropdown.addItems(self.interfaces)
-        self.interface_dropdown.setFixedWidth(150)
-        self.interface_label = QLabel('Select Interface: ')
-        
-        # Create control layout
-        self.control_layout = QHBoxLayout()
-        self.control_layout.addWidget(self.interface_label)
-        self.control_layout.addWidget(self.interface_dropdown)
-        
-        # Filter options (for search by IP or Protocol)
-        self.filter_dropdown = QComboBox(self)
-        self.filter_dropdown.addItems(['IP', 'Protocol'])
-        self.filter_dropdown.setFixedWidth(100)
-        self.input_field = QLineEdit(self)
-        self.input_field.setFixedWidth(150)
-        self.search_button = QPushButton('Search', self)
-        self.search_button.setFixedSize(50, 30)
-        self.control_layout.addWidget(self.filter_dropdown)
-        self.control_layout.addWidget(self.input_field)
-        self.control_layout.addWidget(self.search_button)
-
-        # Create table for packet display
-        self.packet_table = QTableWidget()
-        self.packet_table.setColumnCount(5)
-        self.packet_table.setHorizontalHeaderLabels(['Source IP', 'Destination IP', 'Source Port', 'Destination Port', 'Protocol'])
-        self.packet_table.horizontalHeader().setStretchLastSection(True)
-        
-        # Packet count label
-        self.packet_count_label = QLabel('Packet Count: 0')
-
-        # Adding widgets to layout
-        self.layout.addLayout(self.button_layout)
-        self.layout.addLayout(self.control_layout)
-        self.layout.addWidget(self.packet_table)
-        self.layout.addWidget(self.packet_count_label)
-
-        self.setLayout(self.layout)
-
-        # Connect buttons to functions
-        self.start_button.clicked.connect(self.start_capture)
-        self.stop_button.clicked.connect(self.stop_capture)
-        self.search_button.clicked.connect(self.search_traffic)
-
-        # Timer for periodic UI updates
-        self.ui_update_timer = QTimer()
-        self.ui_update_timer.timeout.connect(self.update_ui)
-        self.ui_update_timer.start(10)  # Update every 10 ms
-
+    # Get network interfaces with friendly names
     def get_interfaces(self):
         """Fetch user-friendly interface names."""
         interfaces = []
@@ -337,89 +265,5 @@ class NetworkAnalyzer(QWidget):
 
         return interfaces, interface_map
 
-    def start_capture(self):
-        # Get the selected interface (human-readable) and map to actual interface
-        selected_iface = self.interface_map[self.interface_dropdown.currentText()]
-        print(f"Starting capture on interface: {selected_iface}")
 
-        # Start the packet capture thread on the selected interface
-        self.packet_capture_thread = PacketCaptureThread(selected_iface)
-        self.packet_capture_thread.packet_captured.connect(self.process_packet)
-        self.packet_capture_thread.start()
-        
-        # Ensure UI is properly aligned
-        self.update_ui()
-
-    def stop_capture(self):
-        # Stop the packet capture thread
-        if self.packet_capture_thread:
-            self.packet_capture_thread.stop()
-            self.packet_capture_thread.quit()
-            self.packet_capture_thread.wait()
-            self.packet_capture_thread = None
-
-    def process_packet(self, packet):
-        if IP in packet:
-            source_ip = packet[IP].src
-            destination_ip = packet[IP].dst
-            source_port = packet.sport if packet.haslayer('TCP') or packet.haslayer('UDP') else 'N/A'
-            destination_port = packet.dport if packet.haslayer('TCP') or packet.haslayer('UDP') else 'N/A'
-            protocol = packet[IP].proto
-            self.packet_list.append([source_ip, destination_ip, source_port, destination_port, protocol])
-            self.packet_table.scrollToBottom()
-
-    def update_ui(self):
-        # Update the table with packet details
-        self.packet_table.setRowCount(len(self.packet_list))
-        for row, packet in enumerate(self.packet_list):
-            for col, item in enumerate(packet):
-                item_widget = QTableWidgetItem(str(item))
-                item_widget.setTextAlignment(Qt.AlignCenter)  # Center-align text
-                self.packet_table.setItem(row, col, item_widget)
-
-        # Ensure all columns have the same width and occupy full space
-        header = self.packet_table.horizontalHeader()
-        for i in range(self.packet_table.columnCount()):
-            header.setSectionResizeMode(i, QHeaderView.Stretch)  # Stretch columns to fit available space
-
-        # Force a layout update to ensure proper alignment
-        self.packet_table.resizeColumnsToContents()
-
-        # Update packet count label
-        self.packet_count_label.setText(f'Packet Count: {len(self.packet_list)}')
-
-        # Ensure proper alignment of all columns
-        for i in range(self.packet_table.columnCount()):
-            self.packet_table.horizontalHeader().setSectionResizeMode(i, QHeaderView.Stretch)
-
-
-    def search_traffic(self):
-        search_type = self.filter_dropdown.currentText()
-        search_value = self.input_field.text()
-        
-        if not search_value:
-            # If search value is empty, show all packets
-            filtered_packets = self.packet_list
-        else:
-            # Filter packets based on the search type
-            if search_type == 'IP':
-                filtered_packets = [p for p in self.packet_list if search_value in p[0] or search_value in p[1]]
-            elif search_type == 'Protocol':
-                filtered_packets = [p for p in self.packet_list if search_value == str(p[4])]
-            else:
-                filtered_packets = self.packet_list  # Default case if search type is unknown
-
-        # Update the table with filtered packets
-        self.packet_table.setRowCount(len(filtered_packets))
-        for row, packet in enumerate(filtered_packets):
-            for col, item in enumerate(packet):
-                item_widget = QTableWidgetItem(str(item))
-                item_widget.setTextAlignment(Qt.AlignCenter)  # Center-align text
-                self.packet_table.setItem(row, col, item_widget)
-        
-        # Ensure all columns have the same width and occupy full space
-        header = self.packet_table.horizontalHeader()
-        for i in range(self.packet_table.columnCount()):
-            header.setSectionResizeMode(i, QHeaderView.Stretch)
-
-# Main application code goes here
+        return interfaces, interface_map
