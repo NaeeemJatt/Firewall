@@ -180,7 +180,23 @@ class NetworkAnalyzer(QWidget):
             destination_ip = packet[IP].dst
             source_port = packet.sport if packet.haslayer('TCP') or packet.haslayer('UDP') else 'N/A'
             destination_port = packet.dport if packet.haslayer('TCP') or packet.haslayer('UDP') else 'N/A'
-            protocol = packet[IP].proto
+            
+            # Protocol identification
+            protocol = 'Unknown'
+            if packet.haslayer('TCP'):
+                protocol = 'TCP'
+                # Further check for application protocols
+                if packet.haslayer('HTTP'):
+                    protocol = 'HTTP'
+                elif packet.haslayer('TLS'):
+                    protocol = 'TLS'
+            elif packet.haslayer('UDP'):
+                protocol = 'UDP'
+                if packet.haslayer('DNS'):
+                    protocol = 'DNS'
+            elif packet.haslayer('ICMP'):
+                protocol = 'ICMP'
+
             self.packet_list.append([source_ip, destination_ip, source_port, destination_port, protocol])
             self.packet_table.scrollToBottom()
 
