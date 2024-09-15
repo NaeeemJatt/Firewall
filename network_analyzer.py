@@ -15,9 +15,10 @@ class PacketCaptureThread(QThread):
     def __init__(self, iface):
         super().__init__()
         self.iface = iface
-        self.stop_event = threading.Event()
+        self.stop_event = threading.Event()  # Event to signal stop
 
     def run(self):
+        print("Capture started on interface:", self.iface)  # Debug log
         sniff(iface=self.iface, prn=self.process_packet, stop_filter=self.should_stop_sniff)
 
     def process_packet(self, packet):
@@ -28,7 +29,8 @@ class PacketCaptureThread(QThread):
         return self.stop_event.is_set()
 
     def stop(self):
-        self.stop_event.set()
+        print("Stop event triggered.")  # Debug log
+        self.stop_event.set()  # Signal the stop event
 
 
 # Main UI for network analyzer
@@ -41,6 +43,7 @@ class NetworkAnalyzer(QWidget):
         self.packet_saved = False  # Tracks if packets are saved
         self.init_ui()
 
+    # Initialize the UI elements
     # Initialize the UI elements
     def init_ui(self):
         self.layout = QVBoxLayout()
@@ -69,29 +72,37 @@ class NetworkAnalyzer(QWidget):
                 color: white;
             }
         """)
-
-        # Interface selection dropdown
-        self.interface_dropdown = QComboBox(self)
-        self.interfaces, self.interface_map = self.get_interfaces()
-        self.interface_dropdown.addItems(self.interfaces)
-        self.interface_label = QLabel('Select Interface: ')
-
-        # Control layout (interface selection)
-        self.control_layout = QHBoxLayout()
-        self.setup_controls()
-
         self.setup_buttons()
+
+        # Move Save button into dropdown's position
         self.save_button = QPushButton('Save File', self)
         self.save_button.setFixedSize(100, 30)
         self.save_button.clicked.connect(self.save_file)
 
-        # Create the table for packet display
-        self.packet_table = self.setup_packet_table()
-        self.packet_count_label = QLabel('Packet Count: 0')
+        # Interface selection dropdown (moved to the left side next to label)
+        self.control_layout = QHBoxLayout()
+        self.interface_dropdown = QComboBox(self)
+        self.interface_dropdown.setFixedWidth(200)
+        self.interfaces, self.interface_map = self.get_interfaces()
+        self.interface_dropdown.addItems(self.interfaces)
+        
+        self.interface_label = QLabel('Select Interface: ')
+
+        # Control layout (interface selection and Save File button)
+        self.control_layout = QHBoxLayout()
+        self.control_layout.addWidget(self.interface_label)
+        self.control_layout.addWidget(self.interface_dropdown)  # Interface dropdown stays to the left
+        
+        # Add the Save button to the right side in place of dropdown
+        self.control_layout.addWidget(self.save_button)
 
         # Add widgets to layout
         self.layout.addLayout(self.button_layout)
         self.layout.addLayout(self.control_layout)
+
+        # Add the table for packet display and other components
+        self.packet_table = self.setup_packet_table()
+        self.packet_count_label = QLabel('Packet Count: 0')
         self.layout.addWidget(self.packet_table)
         self.layout.addWidget(self.packet_count_label)
         self.setLayout(self.layout)
@@ -100,6 +111,7 @@ class NetworkAnalyzer(QWidget):
         self.ui_update_timer = QTimer()
         self.ui_update_timer.timeout.connect(self.update_ui)
         self.ui_update_timer.start(10)  # Updates every 10 ms
+
 
     # Setup packet capture start and stop buttons
     def setup_buttons(self):
@@ -125,18 +137,24 @@ class NetworkAnalyzer(QWidget):
         table.horizontalHeader().setStretchLastSection(True)
         return table
 
+
     # Start capturing packets
     def start_capture(self):
         if self.packet_list and not self.packet_saved:
             reply = QMessageBox.question(self, 'Save File', 'Do you want to save the captured packets before restarting?', QMessageBox.Yes | QMessageBox.No)
             if reply == QMessageBox.Yes:
                 self.save_file()
+            elif reply == QMessageBox.No:
+                self.packet_list.clear()  # Clear the captured packets
+                self.packet_table.setRowCount(0)  # Clear the table
+                self.packet_count_label.setText('Packet Count: 0')  # Reset packet count label
 
         # Continue with starting the capture
         selected_iface = self.interface_map[self.interface_dropdown.currentText()]
         self.packet_capture_thread = PacketCaptureThread(selected_iface)
         self.packet_capture_thread.packet_captured.connect(self.process_packet)
         self.packet_capture_thread.start()
+
 
     def save_file(self):
         if not self.packet_list:
@@ -153,6 +171,14 @@ class NetworkAnalyzer(QWidget):
                 self.save_as_csv(file_name)
             elif file_name.endswith('.pcap'):
                 self.save_as_pcap(file_name)
+
+    def show_message(self, message):
+        msg = QMessageBox()
+        msg.setIcon(QMessageBox.Information)
+        msg.setText(message)
+        msg.setWindowTitle("Information")
+        msg.setStandardButtons(QMessageBox.Ok)
+        msg.exec_()
 
     def save_as_json(self, file_name):
         with open(file_name, 'w') as f:
@@ -171,10 +197,12 @@ class NetworkAnalyzer(QWidget):
     # Stop packet capture
     def stop_capture(self):
         if self.packet_capture_thread:
-            self.packet_capture_thread.stop()
-            self.packet_capture_thread.quit()
-            self.packet_capture_thread.wait()
+            print("Stop button clicked, attempting to stop capture thread.")  # Debug log
+            self.packet_capture_thread.stop()  # Signal the thread to stop
+            self.packet_capture_thread.quit()  # Request the thread to quit
+            self.packet_capture_thread.wait()  # Wait for the thread to finish
             self.packet_capture_thread = None
+            print("Capture thread stopped.")  # Confirm thread has stopped
 
     # Process captured packet and add to list
     def process_packet(self, packet):
