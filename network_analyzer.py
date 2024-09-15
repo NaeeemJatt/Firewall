@@ -8,7 +8,6 @@ import psutil
 from PyQt5.QtWidgets import QHeaderView
 
 
-
 # Class for capturing packets in a separate thread
 class PacketCaptureThread(QThread):
     packet_captured = pyqtSignal(object)
@@ -31,14 +30,15 @@ class PacketCaptureThread(QThread):
     def stop(self):
         self.stop_event.set()
 
+
 # Main UI for network analyzer
 class NetworkAnalyzer(QWidget):
     def __init__(self):
         super().__init__()
         self.packet_list = []  # Stores all captured packets
         self.packet_capture_thread = None  # Will hold the capture thread
-        self.search_table = None  # Holds the reference to the search results table
         self.interface_map = {}  # Mapping of interface friendly names to actual network interfaces
+        self.packet_saved = False  # Tracks if packets are saved
         self.init_ui()
 
     # Initialize the UI elements
@@ -69,11 +69,6 @@ class NetworkAnalyzer(QWidget):
                 color: white;
             }
         """)
-        self.setup_buttons()
-        self.save_button = QPushButton('Save File', self)
-        self.save_button.setFixedSize(100, 30)
-        self.save_button.clicked.connect(self.save_file)
-
 
         # Interface selection dropdown
         self.interface_dropdown = QComboBox(self)
@@ -81,22 +76,23 @@ class NetworkAnalyzer(QWidget):
         self.interface_dropdown.addItems(self.interfaces)
         self.interface_label = QLabel('Select Interface: ')
 
-        # Control layout (interface selection, search options)
+        # Control layout (interface selection)
         self.control_layout = QHBoxLayout()
         self.setup_controls()
+
+        self.setup_buttons()
+        self.save_button = QPushButton('Save File', self)
+        self.save_button.setFixedSize(100, 30)
+        self.save_button.clicked.connect(self.save_file)
 
         # Create the table for packet display
         self.packet_table = self.setup_packet_table()
         self.packet_count_label = QLabel('Packet Count: 0')
 
-        # Search result table
-        self.search_table = self.setup_search_table()
-
         # Add widgets to layout
         self.layout.addLayout(self.button_layout)
         self.layout.addLayout(self.control_layout)
         self.layout.addWidget(self.packet_table)
-        self.layout.addWidget(self.search_table)
         self.layout.addWidget(self.packet_count_label)
         self.setLayout(self.layout)
 
@@ -116,32 +112,10 @@ class NetworkAnalyzer(QWidget):
         self.start_button.clicked.connect(self.start_capture)
         self.stop_button.clicked.connect(self.stop_capture)
 
-    # Setup control panel (interface dropdown, search box)
+    # Setup control panel (interface dropdown)
     def setup_controls(self):
-        self.filter_dropdown = QComboBox(self)
-        self.filter_dropdown.addItems(['IP', 'Protocol'])
-        self.input_field = QLineEdit(self)
-        #self.input_field.setFixedWidth(250)
-        self.search_button = QPushButton('Search', self)
-        self.search_button.setFixedSize(100,30)
-        self.search_button.setStyleSheet("""
-            QPushButton {
-                background-color: lightgreen;
-                border: 1px solid blue;
-            }
-            QPushButton:hover {
-                background-color: zinc;
-                color: white;
-            }
-        """)
         self.control_layout.addWidget(self.interface_label)
         self.control_layout.addWidget(self.interface_dropdown)
-        self.control_layout.addWidget(self.filter_dropdown)
-        self.control_layout.addWidget(self.input_field)
-        self.control_layout.addWidget(self.search_button)
-
-        # Connect search button to search function
-        self.search_button.clicked.connect(self.search_traffic)
 
     # Create table for displaying packets
     def setup_packet_table(self):
@@ -151,44 +125,48 @@ class NetworkAnalyzer(QWidget):
         table.horizontalHeader().setStretchLastSection(True)
         return table
 
-    # Create a search table for displaying filtered packets
-    def setup_search_table(self):
-        table = QTableWidget()
-        table.setColumnCount(5)
-        table.setHorizontalHeaderLabels(['Source IP', 'Destination IP', 'Source Port', 'Destination Port', 'Protocol'])
-        table.horizontalHeader().setStretchLastSection(True)
-        table.setVisible(False)  # Hide initially
-        return table
-
     # Start capturing packets
     def start_capture(self):
         if self.packet_list and not self.packet_saved:
             reply = QMessageBox.question(self, 'Save File', 'Do you want to save the captured packets before restarting?', QMessageBox.Yes | QMessageBox.No)
             if reply == QMessageBox.Yes:
                 self.save_file()
-        
+
         # Continue with starting the capture
         selected_iface = self.interface_map[self.interface_dropdown.currentText()]
         self.packet_capture_thread = PacketCaptureThread(selected_iface)
         self.packet_capture_thread.packet_captured.connect(self.process_packet)
         self.packet_capture_thread.start()
 
-
-    def switch_to_block_website(self):
-        if self.packet_list and not self.packet_saved:
-            reply = QMessageBox.question(self, 'Save File', 'Do you want to save the captured packets before switching?', QMessageBox.Yes | QMessageBox.No)
-            if reply == QMessageBox.Yes:
-                self.save_file()
-        
-        # Proceed with switching section
-        self.show_block_website_section()
-
     def save_file(self):
         if not self.packet_list:
             self.show_message("No packets captured yet. Please capture packets first.")
             return
-    
-    # Proceed with save logic...
+
+        options = QFileDialog.Options()
+        file_name, _ = QFileDialog.getSaveFileName(self, "Save Packet File", "", "JSON Files (*.json);;CSV Files (*.csv);;PCAP Files (*.pcap)", options=options)
+
+        if file_name:
+            if file_name.endswith('.json'):
+                self.save_as_json(file_name)
+            elif file_name.endswith('.csv'):
+                self.save_as_csv(file_name)
+            elif file_name.endswith('.pcap'):
+                self.save_as_pcap(file_name)
+
+    def save_as_json(self, file_name):
+        with open(file_name, 'w') as f:
+            json.dump(self.packet_list, f)
+
+    def save_as_csv(self, file_name):
+        with open(file_name, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(['Source IP', 'Destination IP', 'Source Port', 'Destination Port', 'Protocol'])
+            writer.writerows(self.packet_list)
+
+    def save_as_pcap(self, file_name):
+        # Implement logic to save as PCAP if needed
+        pass
 
     # Stop packet capture
     def stop_capture(self):
@@ -205,12 +183,11 @@ class NetworkAnalyzer(QWidget):
             destination_ip = packet[IP].dst
             source_port = packet.sport if packet.haslayer('TCP') or packet.haslayer('UDP') else 'N/A'
             destination_port = packet.dport if packet.haslayer('TCP') or packet.haslayer('UDP') else 'N/A'
-            
+
             # Protocol identification
             protocol = 'Unknown'
             if packet.haslayer('TCP'):
                 protocol = 'TCP'
-                # Further check for application protocols
                 if packet.haslayer('HTTP'):
                     protocol = 'HTTP'
                 elif packet.haslayer('TLS'):
@@ -224,72 +201,6 @@ class NetworkAnalyzer(QWidget):
 
             self.packet_list.append([source_ip, destination_ip, source_port, destination_port, protocol])
             self.packet_table.scrollToBottom()
-
-    # Search packets based on user input
-    def search_traffic(self):
-        search_type = self.filter_dropdown.currentText()
-        search_value = self.input_field.text().strip()
-
-        if not search_value:
-            self.packet_table.setVisible(True)
-            self.search_table.setVisible(False)
-            self.update_ui()  # Show all packets
-        else:
-            filtered_packets = []
-            if search_type == 'IP':
-                filtered_packets = [p for p in self.packet_list if search_value in p[0] or search_value in p[1]]
-            elif search_type == 'Protocol':
-                filtered_packets = [p for p in self.packet_list if search_value == str(p[4])]
-
-            self.update_search_table(filtered_packets)
-
-        # Save file functionality
-        def save_file(self):
-            if not self.packet_list:
-                self.show_message("No packets captured yet. Please capture packets first.")
-                return
-            
-            options = QFileDialog.Options()
-            file_name, _ = QFileDialog.getSaveFileName(self, "Save Packet File", "", "JSON Files (*.json);;CSV Files (*.csv);;PCAP Files (*.pcap)", options=options)
-            
-            if file_name:
-                if file_name.endswith('.json'):
-                    self.save_as_json(file_name)
-                elif file_name.endswith('.csv'):
-                    self.save_as_csv(file_name)
-                elif file_name.endswith('.pcap'):
-                    self.save_as_pcap(file_name)
-
-        # Saving methods
-        def save_as_json(self, file_name):
-            with open(file_name, 'w') as f:
-                json.dump(self.packet_list, f)
-
-        def save_as_csv(self, file_name):
-            with open(file_name, 'w', newline='') as f:
-                writer = csv.writer(f)
-                writer.writerow(['Source IP', 'Destination IP', 'Source Port', 'Destination Port', 'Protocol'])
-                writer.writerows(self.packet_list)
-
-        def save_as_pcap(self, file_name):
-            # Implement logic to save as PCAP
-            pass
-
-
-
-
-
-    # Update search table with filtered packets
-    def update_search_table(self, filtered_packets):
-        self.search_table.setRowCount(len(filtered_packets))
-        for row, packet in enumerate(filtered_packets):
-            for col, item in enumerate(packet):
-                item_widget = QTableWidgetItem(str(item))
-                item_widget.setTextAlignment(Qt.AlignCenter)
-                self.search_table.setItem(row, col, item_widget)
-
-        self.packet_table.setVisible(False)
-        self.search_table.setVisible(True)
 
     # Periodically update the main packet table
     def update_ui(self):
@@ -305,22 +216,9 @@ class NetworkAnalyzer(QWidget):
         header = self.packet_table.horizontalHeader()
         for i in range(self.packet_table.columnCount()):
             header.setSectionResizeMode(i, QHeaderView.Stretch)  # Make all columns the same width
-        
+
         # Update packet count label
         self.packet_count_label.setText(f'Packet Count: {len(self.packet_list)}')
-
-        # Update search table layout if visible
-        if self.search_table.isVisible():
-            self.search_table.setRowCount(len(self.packet_list))
-            for row, packet in enumerate(self.packet_list):
-                for col, item in enumerate(packet):
-                    item_widget = QTableWidgetItem(str(item))
-                    item_widget.setTextAlignment(Qt.AlignCenter)  # Center-align text
-                    self.search_table.setItem(row, col, item_widget)
-            
-            header = self.search_table.horizontalHeader()
-            for i in range(self.search_table.columnCount()):
-                header.setSectionResizeMode(i, QHeaderView.Stretch)  # Make all columns the same width
 
     # Get network interfaces with friendly names
     def get_interfaces(self):
@@ -339,8 +237,5 @@ class NetworkAnalyzer(QWidget):
             # Add to the dropdown list and create a map for reference
             interfaces.append(human_readable_name)
             interface_map[human_readable_name] = iface_name  # Map human-readable names to actual interface names
-
-        return interfaces, interface_map
-
 
         return interfaces, interface_map
