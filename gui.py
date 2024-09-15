@@ -1,7 +1,6 @@
-# gui.py
-
 from PyQt5.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QStackedWidget
 from network_analyzer import NetworkAnalyzer
+from block_website import BlockWebsite  # Import BlockWebsite class
 
 class FirewallGUI(QWidget):
     def __init__(self):
@@ -39,7 +38,7 @@ class FirewallGUI(QWidget):
 
         # Create instances of both screens
         self.network_analyzer_screen = NetworkAnalyzer()
-        self.block_website_screen = QWidget()  # Placeholder for Block Website functionality
+        self.block_website_screen = BlockWebsite()  # Integrating BlockWebsite functionality
 
         # Add both screens to the stacked widget
         self.stack.addWidget(self.network_analyzer_screen)
@@ -56,5 +55,5 @@ class FirewallGUI(QWidget):
         self.stack.setCurrentWidget(self.network_analyzer_screen)
 
     def show_block_website(self):
-        # Show the Block Website screen (placeholder for now)
+        # Show the Block Website screen
         self.stack.setCurrentWidget(self.block_website_screen)
